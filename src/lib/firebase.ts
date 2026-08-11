@@ -20,6 +20,9 @@ const config = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID!,
 };
 
+/** False while the Firebase env vars are not filled in (fresh deploy). */
+export const isFirebaseConfigured = Boolean(config.apiKey && config.projectId && config.appId);
+
 let app: FirebaseApp | null = null;
 let auth: Auth | null = null;
 let db: Firestore | null = null;

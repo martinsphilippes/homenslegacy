@@ -9,10 +9,27 @@ import {
   signInWithEmailAndPassword,
 } from 'firebase/auth';
 import { FirebaseError } from 'firebase/app';
-import { getFirebaseAuth } from '@/lib/firebase';
+import { getFirebaseAuth, isFirebaseConfigured } from '@/lib/firebase';
 import { ThemeToggle } from '@/components/theme-toggle';
 
 type Mode = 'login' | 'signup' | 'reset';
+
+function SetupNotice() {
+  return (
+    <div className="flex min-h-dvh items-center justify-center px-4">
+      <div className="w-full max-w-md rounded-2xl border border-[var(--line)] bg-[var(--panel)] p-6 text-sm shadow-sm">
+        <h1 className="mb-2 text-lg font-semibold [font-family:var(--font-display)]">
+          Configuração pendente
+        </h1>
+        <p className="text-[var(--muted)]">
+          A aplicação está publicada, mas as variáveis do Firebase
+          (<code>NEXT_PUBLIC_FIREBASE_*</code>) ainda não foram configuradas neste ambiente.
+          Preencha-as conforme o <code>.env.example</code> e faça um novo deploy.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 function LoginForm() {
   const router = useRouter();
@@ -179,6 +196,7 @@ function translateAuthError(err: unknown): string {
 }
 
 export default function LoginPage() {
+  if (!isFirebaseConfigured) return <SetupNotice />;
   return (
     <Suspense>
       <LoginForm />

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { onAuthStateChanged, type User } from 'firebase/auth';
-import { getFirebaseAuth } from '@/lib/firebase';
+import { getFirebaseAuth, isFirebaseConfigured } from '@/lib/firebase';
 
 /**
  * Client-side route protection. The data itself is protected server-side by
@@ -15,8 +15,13 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
   useEffect(() => {
+    if (!isFirebaseConfigured) return;
     return onAuthStateChanged(getFirebaseAuth(), (u) => setUser(u));
   }, []);
+
+  useEffect(() => {
+    if (!isFirebaseConfigured) router.replace('/login');
+  }, [router]);
 
   useEffect(() => {
     if (user === null) {

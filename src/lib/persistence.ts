@@ -1,72 +1,45 @@
 'use client';
 
-import { createClient } from '@/lib/supabase/client';
+import { doc, writeBatch } from 'firebase/firestore';
+import { getDb } from './firebase';
+import { nodeDocData } from './maps-repo';
 import type { MapNode } from './types';
 
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'offline' | 'error';
 
 const DEBOUNCE_MS = 700;
-const RETRY_MS = 15000;
-
-interface PendingState {
-  upserts: Record<string, MapNode>;
-  deletes: string[];
-}
+const BATCH_LIMIT = 450;
 
 /**
- * Debounced save queue with an offline fallback.
- * Pending operations are mirrored to localStorage so edits made offline
- * survive a reload and sync when the connection returns.
+ * Debounced save queue on top of Firestore.
+ * Firestore's persistent local cache makes writes durable offline and syncs
+ * them automatically on reconnect; this queue adds debouncing and a save
+ * status for the UI.
  */
 export class SaveQueue {
   private upserts = new Map<string, MapNode>();
   private deletes = new Set<string>();
   private timer: ReturnType<typeof setTimeout> | null = null;
-  private retryTimer: ReturnType<typeof setTimeout> | null = null;
-  private flushing = false;
+  private inFlight = 0;
   private destroyed = false;
 
   constructor(
     private mapId: string,
     private onStatus: (s: SaveStatus) => void
   ) {
-    this.restore();
     if (typeof window !== 'undefined') {
       window.addEventListener('online', this.handleOnline);
+      window.addEventListener('offline', this.handleOffline);
     }
   }
 
-  private storageKey() {
-    return `hfl-pending:${this.mapId}`;
-  }
-
   private handleOnline = () => {
-    this.flush();
+    if (this.inFlight > 0 || this.hasPending()) this.onStatus('saving');
   };
 
-  private restore() {
-    try {
-      const raw = localStorage.getItem(this.storageKey());
-      if (!raw) return;
-      const state: PendingState = JSON.parse(raw);
-      Object.values(state.upserts).forEach((n) => this.upserts.set(n.id, n));
-      state.deletes.forEach((id) => this.deletes.add(id));
-    } catch {}
-  }
-
-  private persist() {
-    try {
-      if (this.upserts.size === 0 && this.deletes.size === 0) {
-        localStorage.removeItem(this.storageKey());
-      } else {
-        const state: PendingState = {
-          upserts: Object.fromEntries(this.upserts),
-          deletes: [...this.deletes],
-        };
-        localStorage.setItem(this.storageKey(), JSON.stringify(state));
-      }
-    } catch {}
-  }
+  private handleOffline = () => {
+    this.onStatus('offline');
+  };
 
   hasPending() {
     return this.upserts.size > 0 || this.deletes.size > 0;
@@ -75,96 +48,88 @@ export class SaveQueue {
   queueUpsert(node: MapNode) {
     this.deletes.delete(node.id);
     this.upserts.set(node.id, node);
-    this.persist();
     this.schedule();
   }
 
   queueDelete(id: string) {
     this.upserts.delete(id);
     this.deletes.add(id);
-    this.persist();
     this.schedule();
   }
 
   private schedule() {
-    this.onStatus('saving');
+    this.onStatus(typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'saving');
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => this.flush(), DEBOUNCE_MS);
   }
 
-  /** Flushes everything pending. Resolves true when the queue is empty afterwards. */
-  async flush(): Promise<boolean> {
-    if (this.destroyed) return false;
+  /**
+   * Hands everything pending to Firestore. The local cache accepts writes
+   * instantly (even offline); the returned promises resolve on server ack.
+   */
+  flush(): Promise<void> {
+    if (this.destroyed || !this.hasPending()) {
+      if (this.inFlight === 0 && !this.hasPending()) this.onStatus('saved');
+      return Promise.resolve();
+    }
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
     }
-    if (this.flushing) return false;
-    if (!this.hasPending()) {
-      this.onStatus('saved');
-      return true;
-    }
-
-    this.flushing = true;
-    this.onStatus('saving');
 
     const upserts = [...this.upserts.values()];
     const deletes = [...this.deletes];
-    const supabase = createClient();
+    this.upserts.clear();
+    this.deletes.clear();
 
-    try {
-      if (deletes.length) {
-        const { error } = await supabase.from('nodes').delete().in('id', deletes);
-        if (error) throw error;
-        deletes.forEach((id) => this.deletes.delete(id));
+    const db = getDb();
+    const ops: Array<{ type: 'set' | 'delete'; node?: MapNode; id: string }> = [
+      ...upserts.map((n) => ({ type: 'set' as const, node: n, id: n.id })),
+      ...deletes.map((id) => ({ type: 'delete' as const, id })),
+    ];
+
+    const commits: Promise<void>[] = [];
+    for (let i = 0; i < ops.length; i += BATCH_LIMIT) {
+      const batch = writeBatch(db);
+      for (const op of ops.slice(i, i + BATCH_LIMIT)) {
+        const ref = doc(db, 'maps', this.mapId, 'nodes', op.id);
+        if (op.type === 'set') batch.set(ref, nodeDocData(op.node!));
+        else batch.delete(ref);
       }
-      if (upserts.length) {
-        const rows = upserts.map((n) => ({ ...n, created_at: undefined, updated_at: undefined }));
-        const { error } = await supabase.from('nodes').upsert(rows);
-        if (error) throw error;
-        // Only clear entries that were not re-queued while the request ran.
-        upserts.forEach((n) => {
-          if (this.upserts.get(n.id) === n) this.upserts.delete(n.id);
-        });
-      }
-      this.persist();
-      this.flushing = false;
-      if (this.hasPending()) return this.flush();
-      this.onStatus('saved');
-      return true;
-    } catch (e) {
-      this.flushing = false;
-      this.persist();
-      const offline = typeof navigator !== 'undefined' && !navigator.onLine;
-      this.onStatus(offline ? 'offline' : 'error');
-      if (this.retryTimer) clearTimeout(this.retryTimer);
-      this.retryTimer = setTimeout(() => this.flush(), RETRY_MS);
-      console.warn('Falha ao salvar; tentando novamente.', e);
-      return false;
+      commits.push(batch.commit());
     }
+
+    this.inFlight++;
+    const offline = typeof navigator !== 'undefined' && !navigator.onLine;
+    this.onStatus(offline ? 'offline' : 'saving');
+
+    const done = Promise.all(commits)
+      .then(() => {
+        this.inFlight--;
+        if (this.destroyed) return;
+        if (this.inFlight === 0 && !this.hasPending()) this.onStatus('saved');
+      })
+      .catch((e) => {
+        this.inFlight--;
+        if (this.destroyed) return;
+        // With the persistent cache, writes are still queued locally; a
+        // rejection here means a rule/validation error, not lost connectivity.
+        console.warn('Falha ao salvar.', e);
+        this.onStatus('error');
+      });
+
+    // Offline: don't hold callers hostage — the cache already has the writes.
+    return offline ? Promise.resolve() : done;
   }
 
   destroy() {
+    // Flush synchronously into Firestore's cache before going away.
+    if (this.hasPending()) this.flush();
     this.destroyed = true;
     if (this.timer) clearTimeout(this.timer);
-    if (this.retryTimer) clearTimeout(this.retryTimer);
     if (typeof window !== 'undefined') {
       window.removeEventListener('online', this.handleOnline);
+      window.removeEventListener('offline', this.handleOffline);
     }
-  }
-}
-
-export function cacheMapLocally(mapId: string, payload: unknown) {
-  try {
-    localStorage.setItem(`hfl-cache:${mapId}`, JSON.stringify(payload));
-  } catch {}
-}
-
-export function readLocalCache<T>(mapId: string): T | null {
-  try {
-    const raw = localStorage.getItem(`hfl-cache:${mapId}`);
-    return raw ? (JSON.parse(raw) as T) : null;
-  } catch {
-    return null;
   }
 }

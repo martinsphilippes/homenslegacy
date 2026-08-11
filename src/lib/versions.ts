@@ -1,7 +1,18 @@
 'use client';
 
-import { createClient } from '@/lib/supabase/client';
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  setDoc,
+} from 'firebase/firestore';
+import { getDb } from './firebase';
 import type { MapNode, MindMap } from './types';
+import { nodeDocData } from './maps-repo';
 
 const SNAPSHOT_INTERVAL_MS = 30 * 60 * 1000;
 const KEEP = 10;
@@ -12,33 +23,24 @@ const KEEP = 10;
  */
 export async function maybeSnapshot(map: MindMap, nodes: MapNode[]) {
   try {
-    const supabase = createClient();
-    const { data: latest } = await supabase
-      .from('map_versions')
-      .select('id, created_at')
-      .eq('map_id', map.id)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const db = getDb();
+    const versionsRef = collection(db, 'maps', map.id, 'versions');
+    const latest = await getDocs(query(versionsRef, orderBy('created_at', 'desc'), limit(1)));
+    const latestAt = latest.docs[0]?.data().created_at as string | undefined;
+    if (latestAt && Date.now() - new Date(latestAt).getTime() < SNAPSHOT_INTERVAL_MS) return;
 
-    if (latest && Date.now() - new Date(latest.created_at).getTime() < SNAPSHOT_INTERVAL_MS) {
-      return;
-    }
-
-    await supabase.from('map_versions').insert({
+    await setDoc(doc(versionsRef), {
       map_id: map.id,
-      snapshot: { map: { title: map.title, concept: map.concept }, nodes },
+      created_at: new Date().toISOString(),
+      snapshot: {
+        map: { title: map.title, concept: map.concept },
+        nodes: nodes.map((n) => nodeDocData(n)),
+      },
     });
 
-    const { data: all } = await supabase
-      .from('map_versions')
-      .select('id')
-      .eq('map_id', map.id)
-      .order('created_at', { ascending: false });
-
-    if (all && all.length > KEEP) {
-      const stale = all.slice(KEEP).map((v) => v.id);
-      await supabase.from('map_versions').delete().in('id', stale);
+    const all = await getDocs(query(versionsRef, orderBy('created_at', 'desc')));
+    for (const stale of all.docs.slice(KEEP)) {
+      await deleteDoc(stale.ref);
     }
   } catch {
     // Snapshots are best-effort; never block editing.

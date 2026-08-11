@@ -1,0 +1,36 @@
+rules_version = '2';
+
+// Homens | Família & Legado — security rules.
+// Only the map owner can read or write a map and everything inside it.
+// Prepared for future roles: add a `members` map field ({uid: 'editor'|'viewer'})
+// and extend isOwner() checks accordingly.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function ownsMap(mapId) {
+      return signedIn()
+        && get(/databases/$(database)/documents/maps/$(mapId)).data.owner_id == request.auth.uid;
+    }
+
+    match /maps/{mapId} {
+      allow read, update, delete: if signedIn() && resource.data.owner_id == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.owner_id == request.auth.uid;
+
+      match /nodes/{nodeId} {
+        allow read, write: if ownsMap(mapId);
+      }
+
+      match /versions/{versionId} {
+        allow read, write: if ownsMap(mapId);
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,46 +1,101 @@
-// Performance smoke test: seeds a large map (~1200 nodes) into the mock and measures
-// editor load + interaction latency. Run with mock (:54321) and app (:3000) up.
+// Performance smoke test: seeds a large map (~1330 nodes) straight into the
+// Firestore emulator and measures editor load + interaction latency.
+// Prereq: emulators + app (:3000) running, e2e user already created
+// (run scripts/e2e.mjs first). Run: node scripts/perf.mjs
 import { chromium } from 'playwright';
 
-const MOCK = 'http://127.0.0.1:54321';
 const BASE = 'http://127.0.0.1:3000';
-const USER_ID = '11111111-1111-4111-8111-111111111111';
+const FIRESTORE = 'http://127.0.0.1:8080';
+const AUTH = 'http://127.0.0.1:9099';
+const PROJECT = 'demo-hfl';
+const DOCS = `projects/${PROJECT}/databases/(default)/documents`;
 
-async function rest(path, method, body) {
-  const res = await fetch(`${MOCK}/rest/v1/${path}`, {
-    method,
-    headers: { 'content-type': 'application/json', prefer: 'return=representation', accept: 'application/vnd.pgrst.object+json' },
-    body: JSON.stringify(body),
-  });
-  return res.json();
+// Firestore REST value encoding
+function val(v) {
+  if (v === null || v === undefined) return { nullValue: null };
+  if (typeof v === 'string') return { stringValue: v };
+  if (typeof v === 'boolean') return { booleanValue: v };
+  if (typeof v === 'number')
+    return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
+  if (Array.isArray(v)) return { arrayValue: { values: v.map(val) } };
+  return { mapValue: { fields: fields(v) } };
 }
+const fields = (obj) => Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, val(v)]));
 
-// Build a wide+deep tree: root -> 8 branches -> each 15 children -> each 10 children (1+8+120+1200 nodes)
-const map = await rest('maps', 'POST', { owner_id: USER_ID, title: 'Mapa Grande (perf)', concept: 'teste' });
-const nodes = [];
-const mk = (parent_id, title, order) => {
-  const n = {
-    id: crypto.randomUUID(), map_id: map.id, parent_id, title,
-    description: '', notes: '', node_type: 'observacao', importance: 'normal', status: 'ideia',
-    tags: [], refs: [], order_index: order, position_x: null, position_y: null, collapsed: false,
-  };
-  nodes.push(n);
-  return n;
-};
-const root = mk(null, 'RAIZ PERFORMANCE', 0);
-for (let b = 0; b < 8; b++) {
-  const branch = mk(root.id, `Ramo ${b + 1}`, b);
-  for (let c = 0; c < 15; c++) {
-    const child = mk(branch.id, `Assunto ${b + 1}.${c + 1}`, c);
-    for (let g = 0; g < 10; g++) mk(child.id, `Detalhe ${b + 1}.${c + 1}.${g + 1}`, g);
+async function commit(writes) {
+  for (let i = 0; i < writes.length; i += 400) {
+    const res = await fetch(`${FIRESTORE}/v1/${DOCS}:commit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer owner' },
+      body: JSON.stringify({ writes: writes.slice(i, i + 400) }),
+    });
+    if (!res.ok) throw new Error(`commit failed: ${res.status} ${await res.text()}`);
   }
 }
-await fetch(`${MOCK}/rest/v1/nodes`, {
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify(nodes),
-});
-console.log(`seeded ${nodes.length + 1} nodes into map ${map.id}`);
+
+// uid of the e2e test user
+const signIn = await fetch(
+  `${AUTH}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=demo-key`,
+  {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      email: 'teste@exemplo.com',
+      password: 'senha-teste-123',
+      returnSecureToken: true,
+    }),
+  }
+).then((r) => r.json());
+if (!signIn.localId) throw new Error('usuário de teste não existe — rode scripts/e2e.mjs antes');
+const UID = signIn.localId;
+
+const mapId = crypto.randomUUID();
+const now = new Date().toISOString();
+const writes = [
+  {
+    update: {
+      name: `${DOCS}/maps/${mapId}`,
+      fields: fields({
+        id: mapId,
+        owner_id: UID,
+        title: 'Mapa Grande (perf)',
+        concept: 'teste de performance',
+        created_at: now,
+        updated_at: now,
+      }),
+    },
+  },
+];
+
+let total = 0;
+const mk = (parent_id, title, order) => {
+  const id = crypto.randomUUID();
+  total++;
+  writes.push({
+    update: {
+      name: `${DOCS}/maps/${mapId}/nodes/${id}`,
+      fields: fields({
+        id, map_id: mapId, parent_id, title,
+        description: '', notes: '', node_type: 'observacao', importance: 'normal',
+        status: 'ideia', tags: [], refs: [], order_index: order,
+        position_x: null, position_y: null, collapsed: false,
+        created_at: now, updated_at: now, created_by: UID,
+      }),
+    },
+  });
+  return id;
+};
+
+const root = mk(null, 'RAIZ PERFORMANCE', 0);
+for (let b = 0; b < 8; b++) {
+  const branch = mk(root, `Ramo ${b + 1}`, b);
+  for (let c = 0; c < 15; c++) {
+    const child = mk(branch, `Assunto ${b + 1}.${c + 1}`, c);
+    for (let g = 0; g < 10; g++) mk(child, `Detalhe ${b + 1}.${c + 1}.${g + 1}`, g);
+  }
+}
+await commit(writes);
+console.log(`seeded ${total} nodes into map ${mapId}`);
 
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
@@ -51,14 +106,13 @@ await page.goto(BASE + '/login');
 await page.fill('input[type=email]', 'teste@exemplo.com');
 await page.fill('input[type=password]', 'senha-teste-123');
 await page.click('button[type=submit]');
-await page.waitForSelector('text=Mapa Grande (perf)', { timeout: 20000 });
+await page.waitForSelector('text=Abrir mapa', { timeout: 20000 });
 
 const t0 = Date.now();
-await page.goto(`${BASE}/map/${map.id}`);
+await page.goto(`${BASE}/map/${mapId}`);
 await page.waitForSelector('.react-flow__node', { timeout: 30000 });
 const tLoad = Date.now() - t0;
 
-// All expanded: how many DOM nodes / how long to settle
 await page.waitForTimeout(500);
 const rendered = await page.locator('.react-flow__node').count();
 
@@ -69,7 +123,7 @@ await page.fill('input[placeholder*="Buscar"]', 'Ramo 3');
 await page.locator('button', { hasText: /^Ramo 3/ }).first().click();
 await page.waitForSelector('text=Detalhes do assunto', { timeout: 10000 });
 const tSelect = Date.now() - t1;
-await page.waitForTimeout(800); // wait for centering animation
+await page.waitForTimeout(800);
 
 // Collapse a large branch (now centered in viewport)
 const t2 = Date.now();
@@ -86,7 +140,7 @@ await page.waitForTimeout(200);
 const collapsedCount = await page.locator('.react-flow__node').count();
 const tCollapseAll = Date.now() - t3;
 
-// Search across 1200 nodes
+// Search across 1200+ nodes
 const t4 = Date.now();
 await page.keyboard.press('Escape');
 await page.keyboard.press('/');
@@ -95,7 +149,7 @@ await page.waitForSelector('text=Detalhe 7.14.1', { timeout: 10000 });
 const tSearch = Date.now() - t4;
 
 console.log(JSON.stringify({
-  totalNodes: nodes.length + 1,
+  totalNodes: total,
   renderedNodes: rendered,
   loadMs: tLoad,
   selectMs: tSelect,
@@ -105,6 +159,4 @@ console.log(JSON.stringify({
   collapsedVisible: collapsedCount,
 }, null, 2));
 
-// cleanup perf map
-await fetch(`${MOCK}/rest/v1/maps?id=eq.${map.id}`, { method: 'DELETE' });
 await browser.close();

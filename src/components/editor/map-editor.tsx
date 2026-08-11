@@ -17,13 +17,12 @@ import {
   type NodeChange,
 } from '@xyflow/react';
 import { toPng } from 'html-to-image';
-import { createClient } from '@/lib/supabase/client';
-import { SaveQueue, cacheMapLocally, readLocalCache } from '@/lib/persistence';
+import { SaveQueue } from '@/lib/persistence';
+import { fetchMapWithNodes } from '@/lib/maps-repo';
 import { buildChildrenIndex, computeDepths, computeLayout, computeVisibleIds } from '@/lib/layout';
 import { buildBackup } from '@/lib/backup';
 import { maybeSnapshot } from '@/lib/versions';
 import { useMapStore } from '@/store/map-store';
-import type { MapNode, MindMap } from '@/lib/types';
 import { MindNode, type MindFlowNode } from './mind-node';
 import { SidePanel } from './side-panel';
 import { NodeContextMenu, type MenuState } from './context-menu';
@@ -67,38 +66,25 @@ function EditorInner({ mapId }: { mapId: string }) {
     queueRef.current = queue;
 
     async function load() {
-      const supabase = createClient();
-      // Sync edits made offline before fetching, so they are not overwritten.
-      await queue.flush();
-
-      const [mapRes, nodesRes] = await Promise.all([
-        supabase.from('maps').select('*').eq('id', mapId).maybeSingle(),
-        supabase.from('nodes').select('*').eq('map_id', mapId),
-      ]);
-
-      if (cancelled) return;
-
-      if (mapRes.error || nodesRes.error || !mapRes.data) {
-        const cached = readLocalCache<{ map: MindMap; nodes: MapNode[] }>(mapId);
-        if (cached) {
-          useMapStore.getState().init(cached.map, cached.nodes, queue);
-          setOfflineView(true);
+      try {
+        // Firestore serves from its persistent cache automatically when offline;
+        // pending offline writes are already queued in the SDK and sync first.
+        const { map: mapData, nodes: nodeRows, fromCache } = await fetchMapWithNodes(mapId);
+        if (cancelled) return;
+        if (!mapData) {
+          setLoadError('Mapa não encontrado.');
           setLoading(false);
           return;
         }
-        setLoadError(
-          mapRes.error?.message || nodesRes.error?.message || 'Mapa não encontrado.'
-        );
+        useMapStore.getState().init(mapData, nodeRows, queue);
+        setOfflineView(fromCache && typeof navigator !== 'undefined' && !navigator.onLine);
         setLoading(false);
-        return;
+        if (!fromCache) maybeSnapshot(mapData, nodeRows);
+      } catch (e) {
+        if (cancelled) return;
+        setLoadError(e instanceof Error ? e.message : 'Erro ao carregar o mapa.');
+        setLoading(false);
       }
-
-      const mapData = mapRes.data as MindMap;
-      const nodeRows = (nodesRes.data ?? []) as MapNode[];
-      useMapStore.getState().init(mapData, nodeRows, queue);
-      cacheMapLocally(mapId, { map: mapData, nodes: nodeRows });
-      setLoading(false);
-      maybeSnapshot(mapData, nodeRows);
     }
 
     load();
@@ -116,13 +102,6 @@ function EditorInner({ mapId }: { mapId: string }) {
       useMapStore.getState().reset();
     };
   }, [mapId]);
-
-  // Keep the local cache fresh so offline mode shows the latest state.
-  useEffect(() => {
-    if (!map || loading) return;
-    const t = setTimeout(() => cacheMapLocally(mapId, { map, nodes: Object.values(nodes) }), 1500);
-    return () => clearTimeout(t);
-  }, [map, nodes, mapId, loading]);
 
   // ----- Derived React Flow graph ------------------------------------------
   const derived = useMemo(() => {

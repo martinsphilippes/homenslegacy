@@ -1,6 +1,7 @@
-// End-to-end smoke test against the mock Supabase server.
-// Prereq: mock server on :54321, app built with NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
-// and running on :3000. Run: node scripts/e2e.mjs
+// End-to-end smoke test against the Firebase Emulator Suite.
+// Prereq: `npx firebase emulators:start --project demo-hfl --only auth,firestore`
+// and the app built with NEXT_PUBLIC_FIREBASE_EMULATOR=1 running on :3000.
+// Run: node scripts/e2e.mjs
 import { chromium } from 'playwright';
 
 const BASE = 'http://127.0.0.1:3000';
@@ -27,12 +28,22 @@ await page.waitForURL(/\/login/, { timeout: 15000 });
 ok('rota protegida redireciona para /login', page.url().includes('/login'));
 await page.screenshot({ path: `${SHOTS}/01-login.png` });
 
-// 2. Login
+// 2. Login (first run on a fresh emulator: sign up instead)
 await page.fill('input[type=email]', 'teste@exemplo.com');
 await page.fill('input[type=password]', 'senha-teste-123');
 await page.click('button[type=submit]');
-await page.waitForURL((u) => !u.pathname.includes('login'), { timeout: 20000 });
-ok('login redireciona para Meus Mapas', true);
+const loggedIn = await page
+  .waitForURL((u) => !u.pathname.includes('login'), { timeout: 8000 })
+  .then(() => true)
+  .catch(() => false);
+if (!loggedIn) {
+  await page.click('text=Criar conta');
+  await page.fill('input[type=email]', 'teste@exemplo.com');
+  await page.fill('input[type=password]', 'senha-teste-123');
+  await page.click('button[type=submit]');
+  await page.waitForURL((u) => !u.pathname.includes('login'), { timeout: 20000 });
+}
+ok('login/cadastro redireciona para Meus Mapas', true);
 
 // 3. Seeded map appears
 await page.waitForSelector('text=Homem, Família e Legado', { timeout: 20000 });

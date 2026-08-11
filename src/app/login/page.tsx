@@ -1,8 +1,15 @@
 'use client';
 
-import { useState, Suspense } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
+import {
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+} from 'firebase/auth';
+import { FirebaseError } from 'firebase/app';
+import { getFirebaseAuth } from '@/lib/firebase';
 import { ThemeToggle } from '@/components/theme-toggle';
 
 type Mode = 'login' | 'signup' | 'reset';
@@ -17,42 +24,33 @@ function LoginForm() {
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
 
+  // Already signed in? Go straight to the maps list.
+  useEffect(() => {
+    return onAuthStateChanged(getFirebaseAuth(), (u) => {
+      if (u) router.replace(params.get('next') || '/');
+    });
+  }, [router, params]);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError('');
     setInfo('');
-    const supabase = createClient();
+    const auth = getFirebaseAuth();
 
     try {
       if (mode === 'login') {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
+        await signInWithEmailAndPassword(auth, email, password);
         router.replace(params.get('next') || '/');
-        router.refresh();
       } else if (mode === 'signup') {
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { emailRedirectTo: `${location.origin}/auth/confirm` },
-        });
-        if (error) throw error;
-        if (data.session) {
-          router.replace('/');
-          router.refresh();
-        } else {
-          setInfo('Conta criada. Verifique seu e-mail para confirmar o cadastro.');
-        }
+        await createUserWithEmailAndPassword(auth, email, password);
+        router.replace('/');
       } else {
-        const { error } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: `${location.origin}/auth/confirm?next=/update-password`,
-        });
-        if (error) throw error;
+        await sendPasswordResetEmail(auth, email);
         setInfo('Enviamos um link de recuperação para o seu e-mail.');
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Erro inesperado.';
-      setError(translateAuthError(msg));
+      setError(translateAuthError(err));
     } finally {
       setBusy(false);
     }
@@ -158,14 +156,26 @@ function LoginForm() {
   );
 }
 
-function translateAuthError(msg: string): string {
-  if (msg.includes('Invalid login credentials')) return 'E-mail ou senha incorretos.';
-  if (msg.includes('Email not confirmed')) return 'Confirme seu e-mail antes de entrar.';
-  if (msg.includes('User already registered')) return 'Este e-mail já possui cadastro.';
-  if (msg.includes('Password should be')) return 'A senha deve ter pelo menos 6 caracteres.';
-  if (msg.includes('rate limit') || msg.includes('Too many'))
-    return 'Muitas tentativas. Aguarde alguns minutos.';
-  return msg;
+function translateAuthError(err: unknown): string {
+  const code = err instanceof FirebaseError ? err.code : '';
+  switch (code) {
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+    case 'auth/user-not-found':
+      return 'E-mail ou senha incorretos.';
+    case 'auth/email-already-in-use':
+      return 'Este e-mail já possui cadastro.';
+    case 'auth/weak-password':
+      return 'A senha deve ter pelo menos 6 caracteres.';
+    case 'auth/invalid-email':
+      return 'E-mail inválido.';
+    case 'auth/too-many-requests':
+      return 'Muitas tentativas. Aguarde alguns minutos.';
+    case 'auth/network-request-failed':
+      return 'Sem conexão. Verifique sua internet.';
+    default:
+      return err instanceof Error ? err.message : 'Erro inesperado.';
+  }
 }
 
 export default function LoginPage() {

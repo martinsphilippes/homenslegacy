@@ -2,13 +2,26 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
+import { signOut } from 'firebase/auth';
+import { getFirebaseAuth } from '@/lib/firebase';
+import { AuthGate } from '@/components/auth-gate';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { buildSeedNodes, INITIAL_MAP_CONCEPT, INITIAL_MAP_TITLE } from '@/lib/seed';
 import type { MindMap } from '@/lib/types';
 import { validateBackup } from '@/lib/backup';
+import {
+  batchSetNodes,
+  copyMapWithNodes,
+  createMap,
+  deleteMapDeep,
+  fetchNodes,
+  importBackupAsMap,
+  listMaps,
+  renameMap,
+} from '@/lib/maps-repo';
+import { emptyNode } from '@/lib/types';
 
-export default function MapsPage() {
+function MapsScreen() {
   const router = useRouter();
   const [maps, setMaps] = useState<MindMap[] | null>(null);
   const [error, setError] = useState('');
@@ -17,128 +30,66 @@ export default function MapsPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const seededRef = useRef(false);
 
+  const uid = () => getFirebaseAuth().currentUser?.uid ?? '';
+
   const load = useCallback(async () => {
-    const supabase = createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
-      router.replace('/login');
-      return;
-    }
+    try {
+      const data = await listMaps(uid());
 
-    const { data, error } = await supabase
-      .from('maps')
-      .select('*')
-      .order('created_at', { ascending: true });
-
-    if (error) {
-      setError('Não foi possível carregar os mapas. ' + error.message);
-      setMaps([]);
-      return;
-    }
-
-    // First access: create and populate the initial map automatically.
-    if (data.length === 0 && !seededRef.current) {
-      seededRef.current = true;
-      const { data: map, error: mapErr } = await supabase
-        .from('maps')
-        .insert({ owner_id: user.id, title: INITIAL_MAP_TITLE, concept: INITIAL_MAP_CONCEPT })
-        .select()
-        .single();
-      if (mapErr || !map) {
-        setError('Falha ao criar o mapa inicial: ' + (mapErr?.message ?? ''));
-        setMaps([]);
+      // First access: create and populate the initial map automatically.
+      if (data.length === 0 && !seededRef.current) {
+        seededRef.current = true;
+        const map = await createMap(uid(), INITIAL_MAP_TITLE, INITIAL_MAP_CONCEPT);
+        await batchSetNodes(map.id, buildSeedNodes(map.id, uid()));
+        setMaps([map]);
         return;
       }
-      const nodes = buildSeedNodes(map.id, user.id);
-      const { error: nodesErr } = await supabase.from('nodes').insert(nodes);
-      if (nodesErr) {
-        setError('Falha ao popular o mapa inicial: ' + nodesErr.message);
-      }
-      setMaps([map]);
-      return;
+      setMaps(data);
+    } catch (e) {
+      setError('Não foi possível carregar os mapas. ' + (e instanceof Error ? e.message : ''));
+      setMaps([]);
     }
-
-    setMaps(data);
-  }, [router]);
+  }, []);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  async function createMap() {
+  async function handleCreate() {
     const title = prompt('Nome do novo mapa:');
     if (!title?.trim()) return;
-    const supabase = createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-    const { data: map, error } = await supabase
-      .from('maps')
-      .insert({ owner_id: user.id, title: title.trim(), concept: '' })
-      .select()
-      .single();
-    if (error || !map) {
-      setError('Falha ao criar mapa: ' + (error?.message ?? ''));
-      return;
+    try {
+      const map = await createMap(uid(), title.trim(), '');
+      await batchSetNodes(map.id, [
+        emptyNode({
+          id: crypto.randomUUID(),
+          map_id: map.id,
+          title: title.trim(),
+          created_by: uid(),
+        }),
+      ]);
+      router.push(`/map/${map.id}`);
+    } catch (e) {
+      setError('Falha ao criar mapa: ' + (e instanceof Error ? e.message : ''));
     }
-    // Every map starts with a root node.
-    await supabase.from('nodes').insert({
-      id: crypto.randomUUID(),
-      map_id: map.id,
-      parent_id: null,
-      title: title.trim(),
-      order_index: 0,
-      created_by: user.id,
-    });
-    router.push(`/map/${map.id}`);
   }
 
-  async function renameMap(id: string, title: string) {
+  async function handleRename(id: string, title: string) {
     setRenaming(null);
     if (!title.trim()) return;
-    const supabase = createClient();
-    const { error } = await supabase.from('maps').update({ title: title.trim() }).eq('id', id);
-    if (error) setError('Falha ao renomear: ' + error.message);
+    try {
+      await renameMap(id, title.trim());
+    } catch (e) {
+      setError('Falha ao renomear: ' + (e instanceof Error ? e.message : ''));
+    }
     await load();
   }
 
-  async function duplicateMap(map: MindMap) {
+  async function handleDuplicate(map: MindMap) {
     setBusyId(map.id);
     try {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data: newMap, error } = await supabase
-        .from('maps')
-        .insert({ owner_id: user.id, title: `${map.title} (cópia)`, concept: map.concept })
-        .select()
-        .single();
-      if (error || !newMap) throw new Error(error?.message);
-
-      const { data: nodes, error: nErr } = await supabase
-        .from('nodes')
-        .select('*')
-        .eq('map_id', map.id);
-      if (nErr) throw new Error(nErr.message);
-
-      const idMap = new Map<string, string>();
-      nodes.forEach((n) => idMap.set(n.id, crypto.randomUUID()));
-      const copies = nodes.map((n) => ({
-        ...n,
-        id: idMap.get(n.id)!,
-        map_id: newMap.id,
-        parent_id: n.parent_id ? (idMap.get(n.parent_id) ?? null) : null,
-        created_by: user.id,
-      }));
-      if (copies.length) {
-        const { error: cErr } = await supabase.from('nodes').insert(copies);
-        if (cErr) throw new Error(cErr.message);
-      }
+      const nodes = await fetchNodes(map.id);
+      await copyMapWithNodes(map, nodes, uid(), `${map.title} (cópia)`);
       await load();
     } catch (e) {
       setError('Falha ao duplicar: ' + (e instanceof Error ? e.message : ''));
@@ -147,51 +98,28 @@ export default function MapsPage() {
     }
   }
 
-  async function deleteMap(map: MindMap) {
-    if (!confirm(`Excluir o mapa "${map.title}"?\n\nTodos os assuntos serão apagados. Esta ação não pode ser desfeita.`))
+  async function handleDelete(map: MindMap) {
+    if (
+      !confirm(
+        `Excluir o mapa "${map.title}"?\n\nTodos os assuntos serão apagados. Esta ação não pode ser desfeita.`
+      )
+    )
       return;
     setBusyId(map.id);
-    const supabase = createClient();
-    const { error } = await supabase.from('maps').delete().eq('id', map.id);
-    if (error) setError('Falha ao excluir: ' + error.message);
+    try {
+      await deleteMapDeep(map.id);
+    } catch (e) {
+      setError('Falha ao excluir: ' + (e instanceof Error ? e.message : ''));
+    }
     setBusyId(null);
     await load();
   }
 
-  async function importBackup(file: File) {
+  async function handleImport(file: File) {
     try {
       const text = await file.text();
       const backup = validateBackup(JSON.parse(text));
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const { data: map, error } = await supabase
-        .from('maps')
-        .insert({
-          owner_id: user.id,
-          title: `${backup.map.title} (importado)`,
-          concept: backup.map.concept,
-        })
-        .select()
-        .single();
-      if (error || !map) throw new Error(error?.message);
-
-      const idMap = new Map<string, string>();
-      backup.nodes.forEach((n) => idMap.set(n.id, crypto.randomUUID()));
-      const rows = backup.nodes.map((n) => ({
-        ...n,
-        id: idMap.get(n.id)!,
-        map_id: map.id,
-        parent_id: n.parent_id ? (idMap.get(n.parent_id) ?? null) : null,
-        created_by: user.id,
-        created_at: undefined,
-        updated_at: undefined,
-      }));
-      const { error: nErr } = await supabase.from('nodes').insert(rows);
-      if (nErr) throw new Error(nErr.message);
+      await importBackupAsMap(backup, uid());
       await load();
     } catch (e) {
       setError(
@@ -201,11 +129,9 @@ export default function MapsPage() {
     }
   }
 
-  async function logout() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
+  async function handleLogout() {
+    await signOut(getFirebaseAuth());
     router.replace('/login');
-    router.refresh();
   }
 
   return (
@@ -220,7 +146,7 @@ export default function MapsPage() {
         <div className="flex items-center gap-2">
           <ThemeToggle />
           <button
-            onClick={logout}
+            onClick={handleLogout}
             className="h-9 rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 text-sm text-[var(--muted)] transition-colors hover:text-[var(--ink)]"
           >
             Sair
@@ -247,7 +173,7 @@ export default function MapsPage() {
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
-                    renameMap(map.id, renaming.title);
+                    handleRename(map.id, renaming.title);
                   }}
                   className="flex gap-2"
                 >
@@ -290,14 +216,14 @@ export default function MapsPage() {
                     </button>
                     <button
                       disabled={busyId === map.id}
-                      onClick={() => duplicateMap(map)}
+                      onClick={() => handleDuplicate(map)}
                       className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-[var(--muted)] hover:text-[var(--ink)] disabled:opacity-50"
                     >
                       {busyId === map.id ? 'Aguarde…' : 'Duplicar'}
                     </button>
                     <button
                       disabled={busyId === map.id}
-                      onClick={() => deleteMap(map)}
+                      onClick={() => handleDelete(map)}
                       className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-red-600 hover:bg-red-500/10 dark:text-red-400"
                     >
                       Excluir
@@ -312,7 +238,7 @@ export default function MapsPage() {
 
       <div className="mt-8 flex flex-wrap gap-2">
         <button
-          onClick={createMap}
+          onClick={handleCreate}
           className="rounded-xl border border-dashed border-[var(--line)] px-4 py-2.5 text-sm text-[var(--muted)] transition-colors hover:border-[var(--accent)] hover:text-[var(--ink)]"
         >
           + Criar novo mapa
@@ -330,11 +256,19 @@ export default function MapsPage() {
           className="hidden"
           onChange={(e) => {
             const f = e.target.files?.[0];
-            if (f) importBackup(f);
+            if (f) handleImport(f);
             e.target.value = '';
           }}
         />
       </div>
     </div>
+  );
+}
+
+export default function MapsPage() {
+  return (
+    <AuthGate>
+      <MapsScreen />
+    </AuthGate>
   );
 }

@@ -133,14 +133,16 @@ function EditorInner({ mapId }: { mapId: string }) {
     const visible = computeVisibleIds(childrenOf);
     const positions = computeLayout(childrenOf, visible, depths);
 
+    // Descendant counts memoized in a single pass (O(n) overall).
+    const countMemo = new Map<string, number>();
     const subtreeCount = (id: string): number => {
+      const hit = countMemo.get(id);
+      if (hit !== undefined) return hit;
       let count = 0;
-      const stack = [...(childrenOf.get(id) ?? [])];
-      while (stack.length) {
-        const n = stack.pop()!;
-        count++;
-        (childrenOf.get(n.id) ?? []).forEach((c) => stack.push(c));
+      for (const child of childrenOf.get(id) ?? []) {
+        count += 1 + subtreeCount(child.id);
       }
+      countMemo.set(id, count);
       return count;
     };
 

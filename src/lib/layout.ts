@@ -1,10 +1,13 @@
-import dagre from 'dagre';
 import type { MapNode } from './types';
 
 export interface NodeSize {
   width: number;
   height: number;
 }
+
+const RANK_SEP = 90; // horizontal gap between depth columns
+const NODE_SEP = 14; // vertical gap between siblings
+const MARGIN = 40;
 
 export function nodeSize(node: MapNode, depth: number): NodeSize {
   const base = depth === 0 ? 30 : depth === 1 ? 24 : 18;
@@ -58,7 +61,7 @@ export function computeVisibleIds(childrenOf: Map<string | null, MapNode[]>): Se
 }
 
 /**
- * Automatic left-to-right tree layout via dagre.
+ * Automatic left-to-right tidy tree layout, O(n).
  * Nodes with manually stored positions keep them (unless ignoreManual).
  */
 export function computeLayout(
@@ -67,41 +70,65 @@ export function computeLayout(
   depths: Map<string, number>,
   ignoreManual = false
 ): Map<string, { x: number; y: number }> {
-  const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: 'LR', nodesep: 18, ranksep: 90, marginx: 40, marginy: 40 });
-  g.setDefaultEdgeLabel(() => ({}));
-
-  const ordered: MapNode[] = [];
-  const walk = (parent: string | null) => {
-    for (const c of childrenOf.get(parent) ?? []) {
-      if (!visible.has(c.id)) continue;
-      ordered.push(c);
-      if (!c.collapsed) walk(c.id);
-    }
-  };
-  walk(null);
-
-  for (const n of ordered) {
-    const size = nodeSize(n, depths.get(n.id) ?? 0);
-    g.setNode(n.id, { width: size.width, height: size.height });
-  }
-  for (const n of ordered) {
-    if (n.parent_id && visible.has(n.parent_id)) {
-      g.setEdge(n.parent_id, n.id);
-    }
-  }
-
-  dagre.layout(g);
-
   const positions = new Map<string, { x: number; y: number }>();
-  for (const n of ordered) {
-    const manual = !ignoreManual && n.position_x != null && n.position_y != null;
-    if (manual) {
-      positions.set(n.id, { x: n.position_x!, y: n.position_y! });
+
+  const visibleChildren = (id: string) =>
+    (childrenOf.get(id) ?? []).filter((c) => visible.has(c.id));
+
+  // Column x offsets from the widest node of each depth.
+  const colWidth = new Map<number, number>();
+  for (const list of childrenOf.values()) {
+    for (const n of list) {
+      if (!visible.has(n.id)) continue;
+      const d = depths.get(n.id) ?? 0;
+      const w = nodeSize(n, d).width;
+      if (w > (colWidth.get(d) ?? 0)) colWidth.set(d, w);
+    }
+  }
+  const colX = new Map<number, number>();
+  let acc = MARGIN;
+  const maxDepth = colWidth.size ? Math.max(...colWidth.keys()) : 0;
+  for (let d = 0; d <= maxDepth; d++) {
+    colX.set(d, acc);
+    acc += (colWidth.get(d) ?? 160) + RANK_SEP;
+  }
+
+  let cursorY = MARGIN;
+
+  // Post-order placement: leaves stack vertically, parents center on their children.
+  const place = (node: MapNode, depth: number): number => {
+    const size = nodeSize(node, depth);
+    const kids = node.collapsed ? [] : visibleChildren(node.id);
+    let centerY: number;
+
+    if (kids.length === 0) {
+      centerY = cursorY + size.height / 2;
+      cursorY += size.height + NODE_SEP;
     } else {
-      const p = g.node(n.id);
-      const size = nodeSize(n, depths.get(n.id) ?? 0);
-      positions.set(n.id, { x: p.x - size.width / 2, y: p.y - size.height / 2 });
+      const startY = cursorY;
+      const centers = kids.map((k) => place(k, depth + 1));
+      centerY = (centers[0] + centers[centers.length - 1]) / 2;
+      // Guarantee the parent itself never overlaps the next sibling subtree.
+      const bottom = Math.max(cursorY, centerY + size.height / 2 + NODE_SEP);
+      cursorY = Math.max(cursorY, bottom, startY + size.height + NODE_SEP);
+    }
+
+    positions.set(node.id, { x: colX.get(depth) ?? MARGIN, y: centerY - size.height / 2 });
+    return centerY;
+  };
+
+  for (const root of childrenOf.get(null) ?? []) {
+    if (visible.has(root.id)) place(root, 0);
+  }
+
+  // Manual positions override the computed ones.
+  if (!ignoreManual) {
+    for (const list of childrenOf.values()) {
+      for (const n of list) {
+        if (visible.has(n.id) && n.position_x != null && n.position_y != null) {
+          positions.set(n.id, { x: n.position_x, y: n.position_y });
+        }
+      }
     }
   }
   return positions;

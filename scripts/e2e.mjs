@@ -114,8 +114,7 @@ ok('expandir ramo mostra filhos', (await page.locator('.react-flow__node >> text
 await page.keyboard.press('/');
 await page.waitForSelector('input[placeholder*="Buscar"]', { timeout: 5000 });
 await page.fill('input[placeholder*="Buscar"]', 'traição');
-await page.waitForSelector('text=O que consideramos traição?', { timeout: 5000 });
-await page.click('text=O que consideramos traição?');
+await page.locator('button', { hasText: 'O que consideramos traição?' }).first().click({ timeout: 5000 });
 await page.waitForTimeout(900);
 ok('busca encontra e navega até o node', (await page.locator('.react-flow__node >> text="O que consideramos traição?"').count()) > 0);
 await page.screenshot({ path: `${SHOTS}/05-busca.png` });
@@ -123,12 +122,13 @@ await page.screenshot({ path: `${SHOTS}/05-busca.png` });
 // 14. Breadcrumbs visible for selected node
 ok('breadcrumbs mostram caminho', (await page.locator('nav >> text=Infidelidade').count()) > 0);
 
-// 15. Delete node with confirmation
-await page.keyboard.press('Escape'); // close side panel so it does not cover the node
-await page.waitForTimeout(300);
+// 15. Delete node with confirmation (navigate via search to center it first)
+await page.keyboard.press('/');
+await page.fill('input[placeholder*="Buscar"]', 'Rotina');
+await page.locator('button', { hasText: /^Rotina/ }).first().click();
+await page.waitForSelector('text=Detalhes do assunto', { timeout: 8000 });
 page.once('dialog', (d) => d.accept());
-await nodeByTitle(page, 'Rotina').click();
-await page.keyboard.press('Delete');
+await page.locator('aside >> text=Excluir').click();
 await page.waitForTimeout(600);
 ok('excluir com confirmação', (await page.locator('.react-flow__node >> text="Rotina"').count()) === 0);
 

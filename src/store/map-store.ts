@@ -34,6 +34,8 @@ interface MapStore {
 
   createChild: (parentId: string, title?: string) => string;
   createSibling: (id: string, title?: string) => string | null;
+  reparent: (id: string, newParentId: string, opts?: { after?: string }) => boolean;
+  moveChildren: (fromId: string, toId: string) => number;
   updateNode: (id: string, patch: Partial<MapNode>, coalesceKey?: string) => void;
   deleteSubtree: (id: string) => void;
   duplicateSubtree: (id: string) => string | null;
@@ -186,6 +188,78 @@ export const useMapStore = create<MapStore>((set, get) => {
       });
       set({ selectedId: newId, editingId: title ? null : newId });
       return newId;
+    },
+
+    reparent: (id, newParentId, opts) => {
+      const s = get();
+      const nodes = s.nodes;
+      if (id === s.rootId) return false;
+      if (!nodes[id] || !nodes[newParentId]) return false;
+      // A node can never be moved into its own subtree (would create a cycle).
+      if (s.subtreeIds(id).includes(newParentId)) return false;
+
+      mutate((current) => {
+        const next: NodesRecord = { ...current };
+        const siblings = childrenOf(current, newParentId).filter((n) => n.id !== id);
+        let order: number;
+        if (opts?.after) {
+          const idx = siblings.findIndex((x) => x.id === opts.after);
+          if (idx >= 0) {
+            order = siblings[idx].order_index + 1;
+            siblings.slice(idx + 1).forEach((sb) => {
+              next[sb.id] = { ...sb, order_index: sb.order_index + 1 };
+            });
+          } else {
+            order = siblings.length ? siblings[siblings.length - 1].order_index + 1 : 0;
+          }
+        } else {
+          order = siblings.length ? siblings[siblings.length - 1].order_index + 1 : 0;
+        }
+        next[id] = {
+          ...current[id],
+          parent_id: newParentId,
+          order_index: order,
+          position_x: null,
+          position_y: null,
+        };
+        // Make the result visible right away.
+        const parent = next[newParentId] ?? current[newParentId];
+        if (parent.collapsed) next[newParentId] = { ...parent, collapsed: false };
+        return next;
+      });
+      set({ selectedId: id });
+      return true;
+    },
+
+    moveChildren: (fromId, toId) => {
+      const s = get();
+      const nodes = s.nodes;
+      if (!nodes[fromId] || !nodes[toId] || fromId === toId) return 0;
+      const kids = childrenOf(nodes, fromId).filter(
+        // The target itself and any child whose subtree contains the target stay put.
+        (k) => k.id !== toId && !s.subtreeIds(k.id).includes(toId)
+      );
+      if (!kids.length) return 0;
+
+      mutate((current) => {
+        const next: NodesRecord = { ...current };
+        const existing = childrenOf(current, toId);
+        let order = existing.length ? existing[existing.length - 1].order_index + 1 : 0;
+        for (const kid of kids) {
+          next[kid.id] = {
+            ...current[kid.id],
+            parent_id: toId,
+            order_index: order++,
+            position_x: null,
+            position_y: null,
+          };
+        }
+        const target = next[toId] ?? current[toId];
+        if (target.collapsed) next[toId] = { ...target, collapsed: false };
+        return next;
+      });
+      set({ selectedId: toId });
+      return kids.length;
     },
 
     updateNode: (id, patch, coalesceKey) => {

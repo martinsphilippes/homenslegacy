@@ -13,12 +13,14 @@ export interface MindNodeData extends Record<string, unknown> {
   presenting: boolean;
   highlighted: boolean;
   editing: boolean;
+  dropTarget: boolean;
 }
 
 export type MindFlowNode = Node<MindNodeData, 'mind'>;
 
 function MindNodeComponent({ id, data, selected }: NodeProps<MindFlowNode>) {
-  const { node, depth, childCount, hiddenCount, presenting, highlighted, editing } = data;
+  const { node, depth, childCount, hiddenCount, presenting, highlighted, editing, dropTarget } =
+    data;
   const updateNode = useMapStore((s) => s.updateNode);
   const setEditing = useMapStore((s) => s.setEditing);
   const createChild = useMapStore((s) => s.createChild);
@@ -74,6 +76,7 @@ function MindNodeComponent({ id, data, selected }: NodeProps<MindFlowNode>) {
           : 'bg-[var(--panel)] px-3.5 py-2 shadow-sm',
         !isRoot && (fundamental ? 'border-[var(--accent)]' : 'border-[var(--line)]'),
         selected && !presenting ? 'ring-2 ring-[var(--accent)]' : '',
+        dropTarget ? 'scale-105 ring-2 ring-[var(--accent)] ring-offset-2 ring-offset-transparent' : '',
         highlighted ? 'node-flash' : '',
         presenting && childCount > 0 ? 'cursor-pointer' : '',
       ].join(' ')}

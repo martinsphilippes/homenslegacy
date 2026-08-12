@@ -12,12 +12,16 @@ interface Props {
   menu: MenuState;
   onClose: () => void;
   onDelete: (id: string) => void;
+  onPickAction: (mode: 'move' | 'sibling' | 'children', id: string) => void;
 }
 
-export function NodeContextMenu({ menu, onClose, onDelete }: Props) {
+export function NodeContextMenu({ menu, onClose, onDelete, onPickAction }: Props) {
   const store = useMapStore.getState();
   const node = useMapStore((s) => s.nodes[menu.id]);
   const rootId = useMapStore((s) => s.rootId);
+  const hasChildren = useMapStore((s) =>
+    Object.values(s.nodes).some((n) => n.parent_id === menu.id)
+  );
   if (!node) return null;
 
   const isRoot = menu.id === rootId;
@@ -27,6 +31,13 @@ export function NodeContextMenu({ menu, onClose, onDelete }: Props) {
     { label: '+ Criar irmão', disabled: isRoot, run: () => store.createSibling(menu.id) },
     { label: 'Editar título', run: () => store.setEditing(menu.id) },
     { label: 'Duplicar ramo', disabled: isRoot, run: () => store.duplicateSubtree(menu.id) },
+    { label: 'Mover para outra caixa…', disabled: isRoot, run: () => onPickAction('move', menu.id) },
+    { label: 'Tornar irmão de…', disabled: isRoot, run: () => onPickAction('sibling', menu.id) },
+    {
+      label: 'Levar todos os filhos para…',
+      disabled: !hasChildren,
+      run: () => onPickAction('children', menu.id),
+    },
     {
       label: node.collapsed ? 'Expandir' : 'Recolher',
       run: () => store.toggleCollapsed(menu.id),

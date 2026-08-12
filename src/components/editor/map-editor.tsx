@@ -27,6 +27,7 @@ import { MindNode, type MindFlowNode } from './mind-node';
 import { SidePanel } from './side-panel';
 import { NodeContextMenu, type MenuState } from './context-menu';
 import { SearchOverlay } from './search-overlay';
+import { NodePicker } from './node-picker';
 import { Breadcrumbs } from './breadcrumbs';
 import { ThemeToggle } from '@/components/theme-toggle';
 
@@ -55,6 +56,11 @@ function EditorInner({ mapId }: { mapId: string }) {
   const [offlineView, setOfflineView] = useState(false);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [picker, setPicker] = useState<{ mode: 'move' | 'sibling' | 'children'; id: string } | null>(
+    null
+  );
+  const dragSubtreeRef = useRef<Set<string> | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const queueRef = useRef<SaveQueue | null>(null);
@@ -176,6 +182,7 @@ function EditorInner({ mapId }: { mapId: string }) {
           presenting,
           highlighted: n.id === highlightId,
           editing: n.id === editingId,
+          dropTarget: n.id === dropTargetId,
         },
       });
       if (n.parent_id && visible.has(n.parent_id)) {
@@ -188,7 +195,7 @@ function EditorInner({ mapId }: { mapId: string }) {
       }
     }
     return { flowNodes, flowEdges };
-  }, [nodes, selectedId, editingId, highlightId, presenting]);
+  }, [nodes, selectedId, editingId, highlightId, presenting, dropTargetId]);
 
   const [rfNodes, setRfNodes] = useState<MindFlowNode[]>([]);
   useEffect(() => setRfNodes(derived.flowNodes), [derived.flowNodes]);
@@ -197,6 +204,31 @@ function EditorInner({ mapId }: { mapId: string }) {
     (changes: NodeChange<MindFlowNode>[]) =>
       setRfNodes((nds) => applyNodeChanges(changes, nds)),
     []
+  );
+
+  // ----- Drag & drop reparenting -------------------------------------------
+  const findDropTarget = useCallback(
+    (dragged: { id: string; position: { x: number; y: number }; measured?: { width?: number; height?: number } }) => {
+      const sub = dragSubtreeRef.current;
+      if (!sub) return null;
+      const cx = dragged.position.x + (dragged.measured?.width ?? 160) / 2;
+      const cy = dragged.position.y + (dragged.measured?.height ?? 44) / 2;
+      for (const other of rf.getNodes()) {
+        if (sub.has(other.id)) continue;
+        const w = other.measured?.width ?? 160;
+        const h = other.measured?.height ?? 44;
+        if (
+          cx >= other.position.x &&
+          cx <= other.position.x + w &&
+          cy >= other.position.y &&
+          cy <= other.position.y + h
+        ) {
+          return other.id;
+        }
+      }
+      return null;
+    },
+    [rf]
   );
 
   // ----- Actions ------------------------------------------------------------
@@ -432,7 +464,25 @@ function EditorInner({ mapId }: { mapId: string }) {
           e.preventDefault();
           if (!presenting) setMenu({ id: n.id, x: e.clientX, y: e.clientY });
         }}
-        onNodeDragStop={(_, n) => useMapStore.getState().moveNode(n.id, n.position.x, n.position.y)}
+        onNodeDragStart={(_, n) => {
+          if (presenting) return;
+          dragSubtreeRef.current = new Set(useMapStore.getState().subtreeIds(n.id));
+        }}
+        onNodeDrag={(_, n) => {
+          if (presenting) return;
+          setDropTargetId(findDropTarget(n));
+        }}
+        onNodeDragStop={(_, n) => {
+          const target = findDropTarget(n);
+          dragSubtreeRef.current = null;
+          setDropTargetId(null);
+          const s = useMapStore.getState();
+          // Dropping on top of another box moves the branch into it;
+          // dropping on empty canvas just stores the manual position.
+          if (!target || !s.reparent(n.id, target)) {
+            s.moveNode(n.id, n.position.x, n.position.y);
+          }
+        }}
         onPaneClick={() => {
           setMenu(null);
           setExportOpen(false);
@@ -602,12 +652,58 @@ function EditorInner({ mapId }: { mapId: string }) {
             node={selectedNode}
             onClose={() => useMapStore.getState().select(null)}
             onDelete={confirmDelete}
+            onPickAction={(mode, id) => setPicker({ mode, id })}
           />
         </div>
       )}
 
-      {menu && <NodeContextMenu menu={menu} onClose={() => setMenu(null)} onDelete={confirmDelete} />}
+      {menu && (
+        <NodeContextMenu
+          menu={menu}
+          onClose={() => setMenu(null)}
+          onDelete={confirmDelete}
+          onPickAction={(mode, id) => setPicker({ mode, id })}
+        />
+      )}
       {searchOpen && <SearchOverlay onPick={reveal} onClose={() => setSearchOpen(false)} />}
+
+      {picker &&
+        (() => {
+          const s = useMapStore.getState();
+          const exclude = new Set<string>();
+          if (picker.mode === 'children') {
+            exclude.add(picker.id);
+          } else {
+            s.subtreeIds(picker.id).forEach((i) => exclude.add(i));
+            if (picker.mode === 'sibling' && s.rootId) exclude.add(s.rootId);
+          }
+          const titles = {
+            move: 'Mover esta caixa para dentro de…',
+            sibling: 'Tornar esta caixa irmã de…',
+            children: 'Levar todos os filhos desta caixa para…',
+          };
+          return (
+            <NodePicker
+              title={titles[picker.mode]}
+              exclude={exclude}
+              onClose={() => setPicker(null)}
+              onPick={(targetId) => {
+                setPicker(null);
+                if (picker.mode === 'move') {
+                  if (s.reparent(picker.id, targetId)) reveal(picker.id);
+                } else if (picker.mode === 'sibling') {
+                  const parentId = s.nodes[targetId]?.parent_id;
+                  if (parentId && s.reparent(picker.id, parentId, { after: targetId })) {
+                    reveal(picker.id);
+                  }
+                } else {
+                  const moved = s.moveChildren(picker.id, targetId);
+                  if (moved > 0) reveal(targetId);
+                }
+              }}
+            />
+          );
+        })()}
 
       {presenting && rootId && (
         <div className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex justify-center">

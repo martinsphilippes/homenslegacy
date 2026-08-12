@@ -143,6 +143,19 @@ await page.locator('aside >> text=Excluir').click();
 await page.waitForTimeout(600);
 ok('excluir com confirmação', (await page.locator('.react-flow__node >> text="Rotina"').count()) === 0);
 
+// 15b. Move a node to another parent via picker
+await page.keyboard.press('/');
+await page.fill('input[placeholder*="Buscar em títulos"]', 'Disciplina');
+await page.locator('button', { hasText: /^Disciplina/ }).first().click();
+await page.waitForSelector('text=Detalhes do assunto', { timeout: 8000 });
+await page.click('text=Mover para outra caixa…');
+await page.waitForSelector('input[placeholder="Buscar a caixa de destino…"]', { timeout: 5000 });
+await page.fill('input[placeholder="Buscar a caixa de destino…"]', 'MULHER');
+await page.locator('.fixed button', { hasText: 'MULHER' }).first().click();
+await page.waitForTimeout(900);
+ok('mover caixa para outro pai', (await page.locator('nav >> text=MULHER').count()) > 0);
+await page.keyboard.press('Escape');
+
 // 16. Presentation mode
 await page.click('button[title="Modo apresentação"]');
 await page.waitForTimeout(900);

@@ -17,6 +17,7 @@ interface Props {
   node: MapNode;
   onClose: () => void;
   onDelete: (id: string) => void;
+  onPickAction: (mode: 'move' | 'sibling' | 'children', id: string) => void;
 }
 
 const inputCls =
@@ -24,7 +25,7 @@ const inputCls =
 const labelCls =
   'mb-1 mt-4 block text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]';
 
-export function SidePanel({ node, onClose, onDelete }: Props) {
+export function SidePanel({ node, onClose, onDelete, onPickAction }: Props) {
   const updateNode = useMapStore((s) => s.updateNode);
   const createChild = useMapStore((s) => s.createChild);
   const createSibling = useMapStore((s) => s.createSibling);
@@ -267,6 +268,26 @@ export function SidePanel({ node, onClose, onDelete }: Props) {
             className="col-span-2 rounded-lg border border-[var(--line)] py-2 text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--ink)]"
           >
             Expandir somente este ramo
+          </button>
+          <button
+            onClick={() => onPickAction('move', id)}
+            disabled={id === rootId}
+            className="rounded-lg border border-[var(--line)] py-2 text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--ink)] disabled:opacity-40"
+          >
+            Mover para outra caixa…
+          </button>
+          <button
+            onClick={() => onPickAction('sibling', id)}
+            disabled={id === rootId}
+            className="rounded-lg border border-[var(--line)] py-2 text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--ink)] disabled:opacity-40"
+          >
+            Tornar irmão de…
+          </button>
+          <button
+            onClick={() => onPickAction('children', id)}
+            className="col-span-2 rounded-lg border border-[var(--line)] py-2 text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--ink)]"
+          >
+            Levar todos os filhos para…
           </button>
         </div>
       </div>

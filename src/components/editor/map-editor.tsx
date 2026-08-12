@@ -18,7 +18,7 @@ import {
 } from '@xyflow/react';
 import { toPng } from 'html-to-image';
 import { SaveQueue } from '@/lib/persistence';
-import { fetchMapWithNodes } from '@/lib/maps-repo';
+import { fetchMapWithNodes, fetchMapWithNodesFromCache } from '@/lib/maps-repo';
 import { buildChildrenIndex, computeDepths, computeLayout, computeVisibleIds } from '@/lib/layout';
 import { buildBackup } from '@/lib/backup';
 import { maybeSnapshot } from '@/lib/versions';
@@ -66,22 +66,54 @@ function EditorInner({ mapId }: { mapId: string }) {
     queueRef.current = queue;
 
     async function load() {
+      let initialized = false;
+      const fingerprint = (nodes: { updated_at?: string }[]) =>
+        nodes.length + '|' + nodes.reduce((m, n) => (n.updated_at && n.updated_at > m ? n.updated_at : m), '');
+
+      // Fast path: render instantly from the local cache while the server sync runs.
+      const cached = await fetchMapWithNodesFromCache(mapId);
+      if (cancelled) return;
+      if (cached) {
+        useMapStore.getState().init(cached.map, cached.nodes, queue);
+        setOfflineView(typeof navigator !== 'undefined' && !navigator.onLine);
+        setLoading(false);
+        initialized = true;
+      }
+
       try {
         // Firestore serves from its persistent cache automatically when offline;
         // pending offline writes are already queued in the SDK and sync first.
         const { map: mapData, nodes: nodeRows, fromCache } = await fetchMapWithNodes(mapId);
         if (cancelled) return;
         if (!mapData) {
-          setLoadError('Mapa não encontrado.');
-          setLoading(false);
+          if (!initialized) {
+            setLoadError('Mapa não encontrado.');
+            setLoading(false);
+          }
           return;
         }
-        useMapStore.getState().init(mapData, nodeRows, queue);
-        setOfflineView(fromCache && typeof navigator !== 'undefined' && !navigator.onLine);
-        setLoading(false);
-        if (!fromCache) maybeSnapshot(mapData, nodeRows);
+
+        if (!initialized) {
+          useMapStore.getState().init(mapData, nodeRows, queue);
+          setOfflineView(fromCache && typeof navigator !== 'undefined' && !navigator.onLine);
+          setLoading(false);
+        } else {
+          // Refresh with server data only when it differs and there are no
+          // local edits in flight — local work must never be overwritten.
+          const s = useMapStore.getState();
+          const untouched = s.past.length === 0 && s.future.length === 0 && !queue.hasPending();
+          if (!fromCache && untouched && fingerprint(nodeRows) !== fingerprint(cached!.nodes)) {
+            const selected = s.selectedId;
+            s.init(mapData, nodeRows, queue);
+            if (selected && nodeRows.some((n) => n.id === selected)) s.select(selected);
+          }
+          setOfflineView(false);
+        }
+
+        // Best-effort periodic snapshot, deferred to keep the opening fast.
+        if (!fromCache) setTimeout(() => maybeSnapshot(mapData, nodeRows), 6000);
       } catch (e) {
-        if (cancelled) return;
+        if (cancelled || initialized) return;
         setLoadError(e instanceof Error ? e.message : 'Erro ao carregar o mapa.');
         setLoading(false);
       }

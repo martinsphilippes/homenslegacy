@@ -1,6 +1,6 @@
 /* Service worker: app-shell cache + offline fallback.
    Data sync/offline queue is handled in the app itself (localStorage queue). */
-const VERSION = 'hfl-v3';
+const VERSION = 'hfl-v4';
 const STATIC_CACHE = `${VERSION}-static`;
 const PAGE_CACHE = `${VERSION}-pages`;
 
@@ -41,21 +41,22 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Pages: network-first, fall back to cache, then to /offline.
+  // Pages: stale-while-revalidate — serve the cached shell instantly and
+  // refresh it in the background for the next visit.
   if (req.mode === 'navigate') {
     event.respondWith(
-      fetch(req)
-        .then((res) => {
-          if (res.ok) {
-            const copy = res.clone();
-            caches.open(PAGE_CACHE).then((cache) => cache.put(req, copy));
-          }
-          return res;
-        })
-        .catch(async () => {
-          const hit = await caches.match(req);
-          return hit || caches.match('/offline');
-        })
+      caches.match(req).then((hit) => {
+        const refresh = fetch(req)
+          .then((res) => {
+            if (res.ok) {
+              const copy = res.clone();
+              caches.open(PAGE_CACHE).then((cache) => cache.put(req, copy));
+            }
+            return res;
+          })
+          .catch(async () => hit || caches.match('/offline'));
+        return hit || refresh;
+      })
     );
   }
 });

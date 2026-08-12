@@ -17,6 +17,7 @@ import {
   fetchNodes,
   importBackupAsMap,
   listMaps,
+  listMapsFromCache,
   renameMap,
 } from '@/lib/maps-repo';
 import { emptyNode } from '@/lib/types';
@@ -34,6 +35,11 @@ function MapsScreen() {
 
   const load = useCallback(async () => {
     try {
+      // Instant render from cache; the server response below stays authoritative.
+      listMapsFromCache(uid()).then((cached) => {
+        if (cached) setMaps((current) => current ?? cached);
+      });
+
       const data = await listMaps(uid());
 
       // First access: create and populate the initial map automatically.

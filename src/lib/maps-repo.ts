@@ -5,7 +5,9 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocFromCache,
   getDocs,
+  getDocsFromCache,
   query,
   setDoc,
   updateDoc,
@@ -69,6 +71,20 @@ export async function listMaps(uid: string): Promise<MindMap[]> {
   return maps;
 }
 
+/** Instant read from the local cache; null when nothing is cached yet. */
+export async function listMapsFromCache(uid: string): Promise<MindMap[] | null> {
+  try {
+    const db = getDb();
+    const snap = await getDocsFromCache(query(collection(db, 'maps'), where('owner_id', '==', uid)));
+    if (snap.empty) return null;
+    const maps = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as MindMap);
+    maps.sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
+    return maps;
+  } catch {
+    return null;
+  }
+}
+
 export async function createMap(uid: string, title: string, concept: string): Promise<MindMap> {
   const db = getDb();
   const id = crypto.randomUUID();
@@ -97,14 +113,36 @@ export async function fetchMapWithNodes(
   mapId: string
 ): Promise<{ map: MindMap | null; nodes: MapNode[]; fromCache: boolean }> {
   const db = getDb();
-  const mapSnap = await getDoc(doc(db, 'maps', mapId));
+  const [mapSnap, nodesSnap] = await Promise.all([
+    getDoc(doc(db, 'maps', mapId)),
+    getDocs(collection(db, 'maps', mapId, 'nodes')),
+  ]);
   if (!mapSnap.exists()) return { map: null, nodes: [], fromCache: mapSnap.metadata.fromCache };
-  const nodesSnap = await getDocs(collection(db, 'maps', mapId, 'nodes'));
   return {
     map: { ...(mapSnap.data() as MindMap), id: mapSnap.id },
     nodes: nodesSnap.docs.map((d) => d.data() as MapNode),
     fromCache: mapSnap.metadata.fromCache || nodesSnap.metadata.fromCache,
   };
+}
+
+/** Instant read of a map + nodes from the local cache; null on cache miss. */
+export async function fetchMapWithNodesFromCache(
+  mapId: string
+): Promise<{ map: MindMap; nodes: MapNode[] } | null> {
+  try {
+    const db = getDb();
+    const [mapSnap, nodesSnap] = await Promise.all([
+      getDocFromCache(doc(db, 'maps', mapId)),
+      getDocsFromCache(collection(db, 'maps', mapId, 'nodes')),
+    ]);
+    if (!mapSnap.exists() || nodesSnap.empty) return null;
+    return {
+      map: { ...(mapSnap.data() as MindMap), id: mapSnap.id },
+      nodes: nodesSnap.docs.map((d) => d.data() as MapNode),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Copies a map with all nodes (new ids), preserving hierarchy. */

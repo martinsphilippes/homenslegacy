@@ -1,6 +1,6 @@
 /* Service worker: app-shell cache + offline fallback.
    Data sync/offline queue is handled in the app itself (localStorage queue). */
-const VERSION = 'hfl-v2';
+const VERSION = 'hfl-v3';
 const STATIC_CACHE = `${VERSION}-static`;
 const PAGE_CACHE = `${VERSION}-pages`;
 

@@ -165,7 +165,7 @@ function MindNodeComponent({ id, data, selected }: NodeProps<MindFlowNode>) {
           }}
           title={node.collapsed ? 'Expandir' : 'Recolher'}
           className={[
-            'nodrag absolute -right-2.5 top-1/2 flex h-5 min-w-5 -translate-y-1/2 items-center justify-center rounded-full border px-1 text-[10px] font-semibold',
+            'nodrag node-chip absolute -right-2.5 top-1/2 flex h-5 min-w-5 -translate-y-1/2 items-center justify-center rounded-full border px-1 text-[10px] font-semibold',
             node.collapsed
               ? 'border-[var(--accent)] bg-[var(--accent)] text-white'
               : 'border-[var(--line)] bg-[var(--panel)] text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--accent)]',
@@ -184,7 +184,7 @@ function MindNodeComponent({ id, data, selected }: NodeProps<MindFlowNode>) {
           }}
           title="Criar derivação (+)"
           className={[
-            'nodrag absolute -bottom-3 left-1/2 flex h-6 w-6 -translate-x-1/2 items-center justify-center rounded-full border border-[var(--line)] bg-[var(--panel)] text-sm text-[var(--muted)] shadow-sm transition-opacity hover:border-[var(--accent)] hover:text-[var(--accent)]',
+            'nodrag node-add absolute -bottom-3 left-1/2 flex h-6 w-6 -translate-x-1/2 items-center justify-center rounded-full border border-[var(--line)] bg-[var(--panel)] text-sm text-[var(--muted)] shadow-sm transition-opacity hover:border-[var(--accent)] hover:text-[var(--accent)]',
             selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
           ].join(' ')}
         >

@@ -180,6 +180,13 @@ const backup = JSON.parse(fs.readFileSync(path, 'utf8'));
 ok('backup válido e com nodes', backup.format === 'homens-legado-backup' && backup.nodes.length > 50);
 
 // 18. Undo (created child earlier, delete it via undo path): create + undo
+// (presentation mode collapsed the tree; reveal the node via search first)
+await page.keyboard.press('/');
+await page.fill('input[placeholder*="Buscar em títulos"]', 'Disciplina');
+await page.locator('button', { hasText: /^Disciplina/ }).first().click();
+await page.waitForSelector('text=Detalhes do assunto', { timeout: 8000 });
+await page.keyboard.press('Escape'); // close panel; node stays selected? select via node click
+await page.waitForTimeout(400);
 await nodeByTitle(page, 'Disciplina').click();
 await page.keyboard.press('Tab');
 await page.waitForSelector('input[placeholder="Novo assunto…"]');
@@ -204,7 +211,31 @@ await mobile.waitForSelector('text=Abrir mapa', { timeout: 20000 });
 await mobile.click('text=Abrir mapa');
 await mobile.waitForSelector('text=HOMEM, FAMÍLIA E LEGADO', { timeout: 20000 });
 ok('mobile: mapa abre', true);
+
+// Mobile: tapping a node shows the compact action bar, not the full sheet
+await nodeByTitle(mobile, 'HOMEM').tap();
+await mobile.waitForSelector('text=+ Filho', { timeout: 8000 });
+ok('mobile: barra de ações aparece ao tocar', true);
+ok(
+  'mobile: painel completo não cobre a tela',
+  !(await mobile.locator('text=Detalhes do assunto').isVisible().catch(() => false))
+);
 await mobile.screenshot({ path: `${SHOTS}/07-mobile.png` });
+await mobile.click('text=Detalhes');
+await mobile.waitForSelector('text=Detalhes do assunto', { timeout: 8000 });
+ok('mobile: botão Detalhes abre o painel', true);
+await mobile.screenshot({ path: `${SHOTS}/08-mobile-sheet.png` });
+await mobile.click('button[title="Fechar (Esc)"]');
+await mobile.waitForSelector('text=+ Filho', { timeout: 8000 });
+ok('mobile: fechar painel volta para a barra', true);
+// Create a child from the bar
+await mobile.click('text=+ Filho');
+await mobile.waitForSelector('input[placeholder="Novo assunto…"]', { timeout: 8000 });
+ok('mobile: + Filho cria derivação', true);
+await mobile.fill('input[placeholder="Novo assunto…"]', 'Teste Mobile');
+await mobile.keyboard.press('Enter');
+await mobile.waitForSelector('.react-flow__node >> text="Teste Mobile"', { timeout: 8000 });
+ok('mobile: edição inline funciona', true);
 
 // 20. PWA basics
 const manifestResp = await page.request.get(BASE + '/manifest.webmanifest');

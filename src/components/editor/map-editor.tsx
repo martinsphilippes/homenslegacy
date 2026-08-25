@@ -60,7 +60,11 @@ function EditorInner({ mapId }: { mapId: string }) {
   const [picker, setPicker] = useState<{ mode: 'move' | 'sibling' | 'children'; id: string } | null>(
     null
   );
+  const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
   const dragSubtreeRef = useRef<Set<string> | null>(null);
+
+  // Changing selection always goes back to the compact mobile bar.
+  useEffect(() => setMobileSheetOpen(false), [selectedId]);
   const [exportOpen, setExportOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const queueRef = useRef<SaveQueue | null>(null);
@@ -640,17 +644,82 @@ function EditorInner({ mapId }: { mapId: string }) {
 
       {/* Breadcrumbs */}
       {selectedId && !presenting && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-3 z-30 flex justify-center px-16">
+        <div className="pointer-events-none absolute inset-x-0 bottom-3 z-30 flex justify-center px-16 max-md:bottom-[max(76px,calc(env(safe-area-inset-bottom)+64px))] max-md:px-3">
           <Breadcrumbs nodeId={selectedId} onNavigate={reveal} />
         </div>
       )}
 
-      {/* Side panel / bottom sheet */}
+      {/* Mobile: compact quick-action bar (map stays visible) */}
+      {selectedNode && !presenting && !mobileSheetOpen && (
+        <div
+          className="absolute inset-x-0 bottom-0 z-40 md:hidden"
+          style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+        >
+          <div className="pointer-events-auto flex items-center gap-1.5 overflow-x-auto border-t border-[var(--line)] bg-[var(--panel)] px-3 py-2.5 shadow-[0_-4px_16px_rgba(0,0,0,0.15)]">
+            {[
+              {
+                label: '+ Filho',
+                strong: true,
+                run: () => useMapStore.getState().createChild(selectedNode.id),
+              },
+              {
+                label: '+ Irmão',
+                disabled: selectedNode.id === rootId,
+                run: () => useMapStore.getState().createSibling(selectedNode.id),
+              },
+              { label: 'Detalhes', run: () => setMobileSheetOpen(true) },
+              { label: 'Editar', run: () => useMapStore.getState().setEditing(selectedNode.id) },
+              {
+                label: 'Mover…',
+                disabled: selectedNode.id === rootId,
+                run: () => setPicker({ mode: 'move', id: selectedNode.id }),
+              },
+              {
+                label: 'Duplicar',
+                disabled: selectedNode.id === rootId,
+                run: () => useMapStore.getState().duplicateSubtree(selectedNode.id),
+              },
+              {
+                label: 'Excluir',
+                danger: true,
+                disabled: selectedNode.id === rootId,
+                run: () => confirmDelete(selectedNode.id),
+              },
+            ].map((b) => (
+              <button
+                key={b.label}
+                disabled={b.disabled}
+                onClick={b.run}
+                className={[
+                  'shrink-0 whitespace-nowrap rounded-full border px-3.5 py-2 text-[13px] font-medium disabled:opacity-40',
+                  b.strong
+                    ? 'border-transparent bg-[var(--ink)] text-[var(--bg)]'
+                    : b.danger
+                      ? 'border-[var(--line)] text-red-500'
+                      : 'border-[var(--line)] text-[var(--ink)]',
+                ].join(' ')}
+              >
+                {b.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Side panel (desktop) / full bottom sheet (mobile, opened via "Detalhes") */}
       {selectedNode && !presenting && (
-        <div className="absolute inset-x-0 bottom-0 z-40 max-h-[60dvh] md:inset-y-0 md:left-auto md:right-0 md:max-h-none">
+        <div
+          className={[
+            'absolute inset-x-0 bottom-0 z-40 max-h-[75dvh] md:inset-y-0 md:left-auto md:right-0 md:max-h-none',
+            mobileSheetOpen ? '' : 'max-md:hidden',
+          ].join(' ')}
+        >
           <SidePanel
             node={selectedNode}
-            onClose={() => useMapStore.getState().select(null)}
+            onClose={() => {
+              if (mobileSheetOpen) setMobileSheetOpen(false);
+              else useMapStore.getState().select(null);
+            }}
             onDelete={confirmDelete}
             onPickAction={(mode, id) => setPicker({ mode, id })}
           />

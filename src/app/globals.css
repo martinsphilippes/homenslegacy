@@ -107,3 +107,20 @@ body {
 .scrollbar-thin {
   scrollbar-width: thin;
 }
+
+/* Bigger touch targets on phones/tablets */
+@media (pointer: coarse) {
+  .node-chip {
+    height: 26px;
+    min-width: 26px;
+    right: -14px;
+    font-size: 12px;
+  }
+  .node-add {
+    height: 32px;
+    width: 32px;
+    bottom: -18px;
+    font-size: 18px;
+    opacity: 1;
+  }
+}

@@ -59,7 +59,10 @@ export function SidePanel({ node, onClose, onDelete, onPickAction }: Props) {
         </button>
       </div>
 
-      <div className="scrollbar-thin flex-1 overflow-y-auto px-4 pb-6">
+      <div
+        className="scrollbar-thin flex-1 overflow-y-auto px-4"
+        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 32px)' }}
+      >
         <label className={labelCls}>Título</label>
         <input
           value={node.title}

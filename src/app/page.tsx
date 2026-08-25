@@ -21,6 +21,7 @@ import {
   renameMap,
 } from '@/lib/maps-repo';
 import { emptyNode } from '@/lib/types';
+import { ConfirmDialog } from '@/components/confirm-dialog';
 
 function MapsScreen() {
   const router = useRouter();
@@ -28,6 +29,9 @@ function MapsScreen() {
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
+  const [confirmMap, setConfirmMap] = useState<MindMap | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newTitle, setNewTitle] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const seededRef = useRef(false);
 
@@ -61,9 +65,9 @@ function MapsScreen() {
     load();
   }, [load]);
 
-  async function handleCreate() {
-    const title = prompt('Nome do novo mapa:');
-    if (!title?.trim()) return;
+  async function handleCreate(title: string) {
+    if (!title.trim()) return;
+    setCreateOpen(false);
     try {
       const map = await createMap(uid(), title.trim(), '');
       await batchSetNodes(map.id, [
@@ -105,12 +109,6 @@ function MapsScreen() {
   }
 
   async function handleDelete(map: MindMap) {
-    if (
-      !confirm(
-        `Excluir o mapa "${map.title}"?\n\nTodos os assuntos serão apagados. Esta ação não pode ser desfeita.`
-      )
-    )
-      return;
     setBusyId(map.id);
     try {
       await deleteMapDeep(map.id);
@@ -229,7 +227,7 @@ function MapsScreen() {
                     </button>
                     <button
                       disabled={busyId === map.id}
-                      onClick={() => handleDelete(map)}
+                      onClick={() => setConfirmMap(map)}
                       className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-red-600 hover:bg-red-500/10 dark:text-red-400"
                     >
                       Excluir
@@ -244,7 +242,10 @@ function MapsScreen() {
 
       <div className="mt-8 flex flex-wrap gap-2">
         <button
-          onClick={handleCreate}
+          onClick={() => {
+            setNewTitle('');
+            setCreateOpen(true);
+          }}
           className="rounded-xl border border-dashed border-[var(--line)] px-4 py-2.5 text-sm text-[var(--muted)] transition-colors hover:border-[var(--accent)] hover:text-[var(--ink)]"
         >
           + Criar novo mapa
@@ -267,6 +268,59 @@ function MapsScreen() {
           }}
         />
       </div>
+
+      {confirmMap && (
+        <ConfirmDialog
+          title={`Excluir o mapa “${confirmMap.title}”?`}
+          message="Todos os assuntos dentro dele serão apagados. Esta ação não pode ser desfeita."
+          confirmLabel="Excluir mapa"
+          danger
+          onConfirm={() => handleDelete(confirmMap)}
+          onClose={() => setConfirmMap(null)}
+        />
+      )}
+
+      {createOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm"
+          onClick={() => setCreateOpen(false)}
+        >
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleCreate(newTitle);
+            }}
+            className="w-full max-w-sm rounded-2xl border border-[var(--line)] bg-[var(--panel)] p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-base font-semibold">Novo mapa</h2>
+            <input
+              autoFocus
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+              onKeyDown={(e) => e.key === 'Escape' && setCreateOpen(false)}
+              placeholder="Nome do mapa…"
+              className="mt-3 w-full rounded-lg border border-[var(--line)] bg-transparent px-3 py-2.5 text-sm outline-none focus:border-[var(--accent)]"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCreateOpen(false)}
+                className="rounded-lg border border-[var(--line)] px-4 py-2 text-sm text-[var(--muted)] hover:text-[var(--ink)]"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={!newTitle.trim()}
+                className="rounded-lg bg-[var(--ink)] px-4 py-2 text-sm font-medium text-[var(--bg)] hover:opacity-90 disabled:opacity-50"
+              >
+                Criar mapa
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

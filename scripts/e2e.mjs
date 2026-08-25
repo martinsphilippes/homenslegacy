@@ -138,8 +138,9 @@ await page.keyboard.press('/');
 await page.fill('input[placeholder*="Buscar"]', 'Rotina');
 await page.locator('button', { hasText: /^Rotina/ }).first().click();
 await page.waitForSelector('text=Detalhes do assunto', { timeout: 8000 });
-page.once('dialog', (d) => d.accept());
 await page.locator('aside >> text=Excluir').click();
+await page.waitForSelector('[data-testid="confirm-dialog"]', { timeout: 5000 });
+await page.locator('[data-testid="confirm-dialog"] button', { hasText: 'Excluir' }).click();
 await page.waitForTimeout(600);
 ok('excluir com confirmação', (await page.locator('.react-flow__node >> text="Rotina"').count()) === 0);
 
@@ -236,6 +237,21 @@ await mobile.fill('input[placeholder="Novo assunto…"]', 'Teste Mobile');
 await mobile.keyboard.press('Enter');
 await mobile.waitForSelector('.react-flow__node >> text="Teste Mobile"', { timeout: 8000 });
 ok('mobile: edição inline funciona', true);
+
+// Mobile: delete with in-app confirmation dialog (select via search)
+await mobile.click('button[title="Buscar (Ctrl+F ou /)"]');
+await mobile.fill('input[placeholder*="Buscar em títulos"]', 'Teste Mobile');
+await mobile.locator('.fixed.z-50 button', { hasText: 'Teste Mobile' }).first().click();
+await mobile.waitForSelector('text=+ Filho', { timeout: 8000 });
+await mobile.locator('button', { hasText: /^Excluir$/ }).first().click();
+await mobile.waitForSelector('[data-testid="confirm-dialog"]', { timeout: 5000 });
+ok('mobile: diálogo de confirmação aparece', true);
+await mobile.locator('[data-testid="confirm-dialog"] button', { hasText: 'Excluir' }).click();
+await mobile.waitForTimeout(600);
+ok(
+  'mobile: excluir com confirmação funciona',
+  (await mobile.locator('.react-flow__node >> text="Teste Mobile"').count()) === 0
+);
 
 // 20. PWA basics
 const manifestResp = await page.request.get(BASE + '/manifest.webmanifest');

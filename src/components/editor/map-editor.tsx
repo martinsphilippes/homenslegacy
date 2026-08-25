@@ -28,6 +28,7 @@ import { SidePanel } from './side-panel';
 import { NodeContextMenu, type MenuState } from './context-menu';
 import { SearchOverlay } from './search-overlay';
 import { NodePicker } from './node-picker';
+import { ConfirmDialog, type ConfirmDialogProps } from '@/components/confirm-dialog';
 import { Breadcrumbs } from './breadcrumbs';
 import { ThemeToggle } from '@/components/theme-toggle';
 
@@ -61,6 +62,7 @@ function EditorInner({ mapId }: { mapId: string }) {
     null
   );
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
+  const [dialog, setDialog] = useState<Omit<ConfirmDialogProps, 'onClose'> | null>(null);
   const dragSubtreeRef = useRef<Set<string> | null>(null);
 
   // Changing selection always goes back to the compact mobile bar.
@@ -239,17 +241,27 @@ function EditorInner({ mapId }: { mapId: string }) {
   const confirmDelete = useCallback((id: string) => {
     const s = useMapStore.getState();
     if (id === s.rootId) {
-      alert('A raiz do mapa não pode ser excluída.');
+      setDialog({
+        title: 'A raiz do mapa não pode ser excluída',
+        message: 'Todo mapa precisa de um assunto principal.',
+        confirmLabel: 'Entendi',
+        cancelLabel: null,
+      });
       return;
     }
     const node = s.nodes[id];
     if (!node) return;
     const count = s.subtreeIds(id).length - 1;
-    const msg =
-      count > 0
-        ? `Excluir “${node.title}” e ${count} sub-assunto(s)?`
-        : `Excluir “${node.title}”?`;
-    if (confirm(msg)) s.deleteSubtree(id);
+    setDialog({
+      title: `Excluir “${node.title || 'Sem título'}”?`,
+      message:
+        (count > 0
+          ? `${count} sub-assunto(s) dentro dela também serão excluídos. `
+          : '') + 'Se mudar de ideia, dá para desfazer com o botão ↩.',
+      confirmLabel: 'Excluir',
+      danger: true,
+      onConfirm: () => useMapStore.getState().deleteSubtree(id),
+    });
   }, []);
 
   const reveal = useCallback(
@@ -345,7 +357,12 @@ function EditorInner({ mapId }: { mapId: string }) {
       a.download = `${map?.title ?? 'mapa'}.png`;
       a.click();
     } catch {
-      alert('Não foi possível gerar a imagem.');
+      setDialog({
+        title: 'Não foi possível gerar a imagem',
+        message: 'Tente novamente com o mapa visível na tela.',
+        confirmLabel: 'OK',
+        cancelLabel: null,
+      });
     }
   }, [rfNodes, map]);
 
@@ -773,6 +790,8 @@ function EditorInner({ mapId }: { mapId: string }) {
             />
           );
         })()}
+
+      {dialog && <ConfirmDialog {...dialog} onClose={() => setDialog(null)} />}
 
       {presenting && rootId && (
         <div className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex justify-center">

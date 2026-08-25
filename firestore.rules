@@ -1,9 +1,9 @@
 rules_version = '2';
 
 // Homens | Família & Legado — security rules.
-// Only the map owner can read or write a map and everything inside it.
-// Prepared for future roles: add a `members` map field ({uid: 'editor'|'viewer'})
-// and extend isOwner() checks accordingly.
+// The owner has full control; people listed in `member_emails` can read and
+// edit the map and its nodes (shared family/group maps). Only the owner can
+// delete the map or change its ownership.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -11,21 +11,35 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function ownsMap(mapId) {
+    function isOwner(data) {
+      return signedIn() && data.owner_id == request.auth.uid;
+    }
+
+    function isMember(data) {
       return signedIn()
-        && get(/databases/$(database)/documents/maps/$(mapId)).data.owner_id == request.auth.uid;
+        && request.auth.token.email != null
+        && request.auth.token.email.lower() in data.get('member_emails', []);
+    }
+
+    function canAccessMap(mapId) {
+      let data = get(/databases/$(database)/documents/maps/$(mapId)).data;
+      return isOwner(data) || isMember(data);
     }
 
     match /maps/{mapId} {
-      allow read, update, delete: if signedIn() && resource.data.owner_id == request.auth.uid;
+      allow read: if isOwner(resource.data) || isMember(resource.data);
       allow create: if signedIn() && request.resource.data.owner_id == request.auth.uid;
+      // Members may edit map metadata, but ownership can never change hands.
+      allow update: if (isOwner(resource.data) || isMember(resource.data))
+        && request.resource.data.owner_id == resource.data.owner_id;
+      allow delete: if isOwner(resource.data);
 
       match /nodes/{nodeId} {
-        allow read, write: if ownsMap(mapId);
+        allow read, write: if canAccessMap(mapId);
       }
 
       match /versions/{versionId} {
-        allow read, write: if ownsMap(mapId);
+        allow read, write: if canAccessMap(mapId);
       }
     }
 

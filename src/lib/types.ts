@@ -27,6 +27,8 @@ export interface MindMap {
   owner_id: string;
   title: string;
   concept: string;
+  /** E-mails (minúsculos) de quem pode ver e editar este mapa além do dono. */
+  member_emails?: string[];
   created_at: string;
   updated_at: string;
 }

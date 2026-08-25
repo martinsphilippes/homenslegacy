@@ -63,26 +63,63 @@ export async function batchSetNodes(mapId: string, nodes: MapNode[]) {
   }
 }
 
-export async function listMaps(uid: string): Promise<MindMap[]> {
-  const db = getDb();
-  const snap = await getDocs(query(collection(db, 'maps'), where('owner_id', '==', uid)));
-  const maps = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as MindMap);
+function mergeMaps(...lists: MindMap[][]): MindMap[] {
+  const byId = new Map<string, MindMap>();
+  for (const list of lists) for (const m of list) byId.set(m.id, m);
+  const maps = [...byId.values()];
   maps.sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
   return maps;
 }
 
+const toMaps = (snap: { docs: { id: string; data: () => unknown }[] }) =>
+  snap.docs.map((d) => ({ ...(d.data() as MindMap), id: d.id }));
+
+/** Own maps + maps shared with this e-mail. */
+export async function listMaps(uid: string, email?: string | null): Promise<MindMap[]> {
+  const db = getDb();
+  const queries = [getDocs(query(collection(db, 'maps'), where('owner_id', '==', uid)))];
+  if (email) {
+    queries.push(
+      getDocs(
+        query(collection(db, 'maps'), where('member_emails', 'array-contains', email.toLowerCase()))
+      )
+    );
+  }
+  const snaps = await Promise.all(queries);
+  return mergeMaps(...snaps.map(toMaps));
+}
+
 /** Instant read from the local cache; null when nothing is cached yet. */
-export async function listMapsFromCache(uid: string): Promise<MindMap[] | null> {
+export async function listMapsFromCache(
+  uid: string,
+  email?: string | null
+): Promise<MindMap[] | null> {
   try {
     const db = getDb();
-    const snap = await getDocsFromCache(query(collection(db, 'maps'), where('owner_id', '==', uid)));
-    if (snap.empty) return null;
-    const maps = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as MindMap);
-    maps.sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
-    return maps;
+    const own = await getDocsFromCache(
+      query(collection(db, 'maps'), where('owner_id', '==', uid))
+    ).catch(() => null);
+    const shared = email
+      ? await getDocsFromCache(
+          query(
+            collection(db, 'maps'),
+            where('member_emails', 'array-contains', email.toLowerCase())
+          )
+        ).catch(() => null)
+      : null;
+    const lists = [own, shared].filter(Boolean).map((s) => toMaps(s!));
+    const maps = mergeMaps(...lists);
+    return maps.length ? maps : null;
   } catch {
     return null;
   }
+}
+
+/** Replaces the list of e-mails that can access the map (owner action). */
+export async function setMapMembers(mapId: string, emails: string[]) {
+  const clean = [...new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean))];
+  await updateDoc(doc(getDb(), 'maps', mapId), { member_emails: clean, updated_at: now() });
+  return clean;
 }
 
 export async function createMap(uid: string, title: string, concept: string): Promise<MindMap> {

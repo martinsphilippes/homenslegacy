@@ -51,6 +51,8 @@ interface MapStore {
 
   subtreeIds: (id: string) => string[];
   pathTo: (id: string) => MapNode[];
+  /** Applies changes coming from other devices/users (no history, no save queue). */
+  applyRemoteChanges: (upserts: MapNode[], deletes: string[]) => void;
 }
 
 let queueRef: SaveQueue | null = null;
@@ -442,6 +444,33 @@ export const useMapStore = create<MapStore>((set, get) => {
         (index.get(current) ?? []).forEach((c) => stack.push(c.id));
       }
       return result;
+    },
+
+    applyRemoteChanges: (upserts, deletes) => {
+      const state = get();
+      const next = { ...state.nodes };
+      let changed = false;
+      for (const n of upserts) {
+        const cur = next[n.id];
+        if (!cur || (n.updated_at ?? '') !== (cur.updated_at ?? '')) {
+          next[n.id] = n;
+          changed = true;
+        }
+      }
+      for (const id of deletes) {
+        if (next[id]) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      if (!changed) return;
+      const root = Object.values(next).find((n) => !n.parent_id);
+      const selectedGone = state.selectedId && !next[state.selectedId];
+      set({
+        nodes: next,
+        rootId: root?.id ?? null,
+        ...(selectedGone ? { selectedId: null, editingId: null } : {}),
+      });
     },
 
     pathTo: (id) => {

@@ -265,6 +265,49 @@ await page.click('text=Sair');
 await page.waitForURL(/login/, { timeout: 15000 });
 ok('logout retorna ao login', true);
 
+// 22. Sharing: user A shares the map with teste2
+await page.goto(BASE + '/login');
+await page.fill('input[type=email]', 'teste@exemplo.com');
+await page.fill('input[type=password]', 'senha-teste-123');
+await page.click('button[type=submit]');
+await page.waitForSelector('text=Abrir mapa', { timeout: 20000 });
+await page.click('text=Compartilhar');
+await page.waitForSelector('input[placeholder="email@dapessoa.com"]', { timeout: 8000 });
+await page.fill('input[placeholder="email@dapessoa.com"]', 'teste2@exemplo.com');
+await page.locator('form button[type=submit]', { hasText: 'Adicionar' }).click();
+await page.waitForSelector('.fixed li >> text=teste2@exemplo.com', { timeout: 10000 });
+await page.waitForSelector('text=Compartilhado com 1 pessoa(s)', { timeout: 10000 });
+ok('compartilhar mapa por e-mail', true);
+await page.click('text=Fechar');
+
+// 23. Guest signs up and sees the shared map (no own seeded copy)
+const guest = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+await guest.goto(BASE + '/login');
+await guest.click('text=Criar conta');
+await guest.fill('input[type=email]', 'teste2@exemplo.com');
+await guest.fill('input[type=password]', 'senha-teste-123');
+await guest.click('button[type=submit]');
+await guest.waitForSelector('text=Compartilhado comigo', { timeout: 20000 });
+ok(
+  'convidado vê o mapa compartilhado (sem cópia própria)',
+  (await guest.locator('text=Homem, Família e Legado').count()) === 1
+);
+
+// 24. Real-time sync: A creates a node, guest sees it without reloading
+await page.click('text=Abrir mapa');
+await page.waitForSelector('text=HOMEM, FAMÍLIA E LEGADO', { timeout: 20000 });
+await guest.click('text=Abrir mapa');
+await guest.waitForSelector('text=HOMEM, FAMÍLIA E LEGADO', { timeout: 20000 });
+await nodeByTitle(page, 'HOMEM, FAMÍLIA E LEGADO').click();
+await page.keyboard.press('Tab');
+await page.waitForSelector('input[placeholder="Novo assunto…"]');
+await page.fill('input[placeholder="Novo assunto…"]', 'Tempo Real');
+await page.keyboard.press('Enter');
+await page.waitForSelector('text=Salvo', { timeout: 10000 });
+await guest.waitForSelector('.react-flow__node >> text="Tempo Real"', { timeout: 15000 });
+ok('sincronização em tempo real entre usuários', true);
+await guest.close();
+
 await browser.close();
 console.log(failures === 0 ? '\nTODOS OS TESTES PASSARAM' : `\n${failures} FALHA(S)`);
 process.exit(failures === 0 ? 0 : 1);

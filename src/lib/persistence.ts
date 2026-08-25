@@ -45,6 +45,10 @@ export class SaveQueue {
     return this.upserts.size > 0 || this.deletes.size > 0;
   }
 
+  hasPendingFor(id: string) {
+    return this.upserts.has(id) || this.deletes.has(id);
+  }
+
   queueUpsert(node: MapNode) {
     this.deletes.delete(node.id);
     this.upserts.set(node.id, node);

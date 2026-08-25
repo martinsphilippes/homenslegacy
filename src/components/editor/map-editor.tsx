@@ -17,8 +17,10 @@ import {
   type NodeChange,
 } from '@xyflow/react';
 import { toPng } from 'html-to-image';
+import { collection, doc, onSnapshot } from 'firebase/firestore';
+import { getDb } from '@/lib/firebase';
 import { SaveQueue } from '@/lib/persistence';
-import { fetchMapWithNodes, fetchMapWithNodesFromCache } from '@/lib/maps-repo';
+import type { MapNode, MindMap } from '@/lib/types';
 import { buildChildrenIndex, computeDepths, computeLayout, computeVisibleIds } from '@/lib/layout';
 import { buildBackup } from '@/lib/backup';
 import { maybeSnapshot } from '@/lib/versions';
@@ -71,74 +73,94 @@ function EditorInner({ mapId }: { mapId: string }) {
   const [fullscreen, setFullscreen] = useState(false);
   const queueRef = useRef<SaveQueue | null>(null);
 
-  // ----- Data loading -------------------------------------------------------
+  // ----- Data loading (real-time) -------------------------------------------
   useEffect(() => {
-    let cancelled = false;
     const queue = new SaveQueue(mapId, (s) => useMapStore.getState().setSaveStatus(s));
     queueRef.current = queue;
+    const db = getDb();
 
-    async function load() {
-      let initialized = false;
-      const fingerprint = (nodes: { updated_at?: string }[]) =>
-        nodes.length + '|' + nodes.reduce((m, n) => (n.updated_at && n.updated_at > m ? n.updated_at : m), '');
+    let pendingMap: MindMap | null = null;
+    let pendingNodes: MapNode[] | null = null;
+    let initialized = false;
+    let snapshotTimer: ReturnType<typeof setTimeout> | null = null;
 
-      // Fast path: render instantly from the local cache while the server sync runs.
-      const cached = await fetchMapWithNodesFromCache(mapId);
-      if (cancelled) return;
-      if (cached) {
-        useMapStore.getState().init(cached.map, cached.nodes, queue);
-        setOfflineView(typeof navigator !== 'undefined' && !navigator.onLine);
-        setLoading(false);
-        initialized = true;
-      }
+    const tryInit = (fromCache: boolean) => {
+      if (initialized || !pendingMap || pendingNodes === null) return;
+      initialized = true;
+      const m = pendingMap;
+      const n = pendingNodes;
+      useMapStore.getState().init(m, n, queue);
+      setLoading(false);
+      // Best-effort periodic snapshot, deferred to keep the opening fast.
+      if (!fromCache) snapshotTimer = setTimeout(() => maybeSnapshot(m, n), 6000);
+    };
 
-      try {
-        // Firestore serves from its persistent cache automatically when offline;
-        // pending offline writes are already queued in the SDK and sync first.
-        const { map: mapData, nodes: nodeRows, fromCache } = await fetchMapWithNodes(mapId);
-        if (cancelled) return;
-        if (!mapData) {
-          if (!initialized) {
+    // Live subscription to the map document (title/concept edits from others).
+    const unsubMap = onSnapshot(
+      doc(db, 'maps', mapId),
+      (snap) => {
+        if (!snap.exists()) {
+          if (!initialized && !snap.metadata.fromCache) {
             setLoadError('Mapa não encontrado.');
             setLoading(false);
           }
           return;
         }
-
+        const mapData = { ...(snap.data() as MindMap), id: snap.id };
         if (!initialized) {
-          useMapStore.getState().init(mapData, nodeRows, queue);
-          setOfflineView(fromCache && typeof navigator !== 'undefined' && !navigator.onLine);
-          setLoading(false);
+          pendingMap = mapData;
+          tryInit(snap.metadata.fromCache);
         } else {
-          // Refresh with server data only when it differs and there are no
-          // local edits in flight — local work must never be overwritten.
-          const s = useMapStore.getState();
-          const untouched = s.past.length === 0 && s.future.length === 0 && !queue.hasPending();
-          if (!fromCache && untouched && fingerprint(nodeRows) !== fingerprint(cached!.nodes)) {
-            const selected = s.selectedId;
-            s.init(mapData, nodeRows, queue);
-            if (selected && nodeRows.some((n) => n.id === selected)) s.select(selected);
-          }
-          setOfflineView(false);
+          useMapStore.getState().setMapMeta({ title: mapData.title, concept: mapData.concept });
         }
-
-        // Best-effort periodic snapshot, deferred to keep the opening fast.
-        if (!fromCache) setTimeout(() => maybeSnapshot(mapData, nodeRows), 6000);
-      } catch (e) {
-        if (cancelled || initialized) return;
-        setLoadError(e instanceof Error ? e.message : 'Erro ao carregar o mapa.');
-        setLoading(false);
+      },
+      (e) => {
+        if (!initialized) {
+          setLoadError(e.message);
+          setLoading(false);
+        }
       }
-    }
+    );
 
-    load();
+    // Live subscription to the nodes: edits made by other people (or other
+    // devices) appear here in real time.
+    const unsubNodes = onSnapshot(
+      collection(db, 'maps', mapId, 'nodes'),
+      (snap) => {
+        setOfflineView(
+          snap.metadata.fromCache && typeof navigator !== 'undefined' && !navigator.onLine
+        );
+        if (!initialized) {
+          pendingNodes = snap.docs.map((d) => d.data() as MapNode);
+          tryInit(snap.metadata.fromCache);
+          return;
+        }
+        const ups: MapNode[] = [];
+        const dels: string[] = [];
+        for (const ch of snap.docChanges()) {
+          if (ch.doc.metadata.hasPendingWrites) continue; // echo of our own write
+          if (queue.hasPendingFor(ch.doc.id)) continue; // local edit wins until synced
+          if (ch.type === 'removed') dels.push(ch.doc.id);
+          else ups.push(ch.doc.data() as MapNode);
+        }
+        if (ups.length || dels.length) useMapStore.getState().applyRemoteChanges(ups, dels);
+      },
+      (e) => {
+        if (!initialized) {
+          setLoadError(e.message);
+          setLoading(false);
+        }
+      }
+    );
 
     const flushNow = () => queue.flush();
     window.addEventListener('beforeunload', flushNow);
     window.addEventListener('pagehide', flushNow);
 
     return () => {
-      cancelled = true;
+      unsubMap();
+      unsubNodes();
+      if (snapshotTimer) clearTimeout(snapshotTimer);
       window.removeEventListener('beforeunload', flushNow);
       window.removeEventListener('pagehide', flushNow);
       queue.flush();

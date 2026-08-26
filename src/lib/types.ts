@@ -48,6 +48,8 @@ export interface MapNode {
   tags: string[];
   refs: BibleRef[];
   order_index: number;
+  /** Outras caixas às quais este assunto também pertence (sem duplicar). */
+  linked_parent_ids?: string[];
   position_x: number | null;
   position_y: number | null;
   collapsed: boolean;
@@ -100,6 +102,7 @@ export function emptyNode(partial: Partial<MapNode> & { id: string; map_id: stri
     tags: [],
     refs: [],
     order_index: 0,
+    linked_parent_ids: [],
     position_x: null,
     position_y: null,
     collapsed: false,

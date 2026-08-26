@@ -91,7 +91,8 @@ function MindNodeComponent({ id, data, selected }: NodeProps<MindFlowNode>) {
           node.status !== 'ideia' ||
           important ||
           fundamental ||
-          node.refs.length > 0) && (
+          node.refs.length > 0 ||
+          (node.linked_parent_ids?.length ?? 0) > 0) && (
           <div className="mb-1 flex flex-wrap items-center gap-1.5">
             {node.node_type !== 'observacao' && (
               <span
@@ -120,6 +121,14 @@ function MindNodeComponent({ id, data, selected }: NodeProps<MindFlowNode>) {
             {node.refs.length > 0 && (
               <span className="text-[9px] text-[var(--muted)]" title="Referências bíblicas">
                 ✝ {node.refs.length}
+              </span>
+            )}
+            {(node.linked_parent_ids?.length ?? 0) > 0 && (
+              <span
+                className="rounded px-1 text-[9px] font-bold text-[var(--accent)]"
+                title={`Também pertence a ${node.linked_parent_ids!.length} outra(s) caixa(s)`}
+              >
+                ⇄ {node.linked_parent_ids!.length}
               </span>
             )}
           </div>

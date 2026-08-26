@@ -37,6 +37,9 @@ export function validateBackup(raw: unknown): MapBackup {
     tags: Array.isArray(n.tags) ? n.tags.filter((t): t is string => typeof t === 'string') : [],
     refs: Array.isArray(n.refs) ? (n.refs as MapNode['refs']) : [],
     order_index: typeof n.order_index === 'number' ? n.order_index : i,
+    linked_parent_ids: Array.isArray(n.linked_parent_ids)
+      ? n.linked_parent_ids.filter((p): p is string => typeof p === 'string' && ids.has(p))
+      : [],
     position_x: typeof n.position_x === 'number' ? n.position_x : null,
     position_y: typeof n.position_y === 'number' ? n.position_y : null,
     collapsed: !!n.collapsed,

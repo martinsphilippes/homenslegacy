@@ -17,7 +17,8 @@ interface Props {
   node: MapNode;
   onClose: () => void;
   onDelete: (id: string) => void;
-  onPickAction: (mode: 'move' | 'sibling' | 'children', id: string) => void;
+  onPickAction: (mode: 'move' | 'sibling' | 'children' | 'link', id: string) => void;
+  onNavigate?: (id: string) => void;
 }
 
 const inputCls =
@@ -25,7 +26,10 @@ const inputCls =
 const labelCls =
   'mb-1 mt-4 block text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]';
 
-export function SidePanel({ node, onClose, onDelete, onPickAction }: Props) {
+export function SidePanel({ node, onClose, onDelete, onPickAction, onNavigate }: Props) {
+  const nodes = useMapStore((s) => s.nodes);
+  const unlinkFromParent = useMapStore((s) => s.unlinkFromParent);
+  const parentTitle = node.parent_id ? (nodes[node.parent_id]?.title ?? '') : '';
   const updateNode = useMapStore((s) => s.updateNode);
   const createChild = useMapStore((s) => s.createChild);
   const createSibling = useMapStore((s) => s.createSibling);
@@ -175,6 +179,54 @@ export function SidePanel({ node, onClose, onDelete, onPickAction }: Props) {
             ))}
           </div>
         )}
+
+        <label className={labelCls}>Pertence a</label>
+        <div className="space-y-1.5">
+          {node.parent_id && (
+            <div className="flex items-center justify-between rounded-lg border border-[var(--line)] px-2.5 py-1.5">
+              <button
+                onClick={() => onNavigate?.(node.parent_id!)}
+                className="truncate text-left text-sm hover:text-[var(--accent)]"
+              >
+                {parentTitle || 'Sem título'}
+              </button>
+              <span className="ml-2 shrink-0 text-[10px] uppercase tracking-wide text-[var(--muted)]">
+                principal
+              </span>
+            </div>
+          )}
+          {(node.linked_parent_ids ?? []).map((pid) => (
+            <div
+              key={pid}
+              className="flex items-center justify-between rounded-lg border border-dashed border-[var(--accent)] px-2.5 py-1.5"
+            >
+              <button
+                onClick={() => onNavigate?.(pid)}
+                className="truncate text-left text-sm hover:text-[var(--accent)]"
+              >
+                {nodes[pid]?.title || 'Caixa removida'}
+              </button>
+              <button
+                onClick={() => unlinkFromParent(id, pid)}
+                className="ml-2 shrink-0 text-xs text-red-500 hover:underline"
+                title="Desvincular"
+              >
+                desvincular
+              </button>
+            </div>
+          ))}
+          <button
+            onClick={() => onPickAction('link', id)}
+            disabled={id === rootId}
+            className="w-full rounded-lg border border-dashed border-[var(--line)] py-1.5 text-xs text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--ink)] disabled:opacity-40"
+          >
+            ⇄ Vincular também a outra caixa…
+          </button>
+          <p className="text-[10px] leading-snug text-[var(--muted)]">
+            O mesmo assunto pode pertencer a vários lugares sem ser duplicado — os vínculos
+            aparecem como linhas tracejadas no mapa.
+          </p>
+        </div>
 
         <label className={labelCls}>Tipo da informação</label>
         <select

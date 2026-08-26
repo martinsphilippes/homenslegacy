@@ -60,9 +60,10 @@ function EditorInner({ mapId }: { mapId: string }) {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
-  const [picker, setPicker] = useState<{ mode: 'move' | 'sibling' | 'children'; id: string } | null>(
-    null
-  );
+  const [picker, setPicker] = useState<{
+    mode: 'move' | 'sibling' | 'children' | 'link';
+    id: string;
+  } | null>(null);
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
   const [dialog, setDialog] = useState<Omit<ConfirmDialogProps, 'onClose'> | null>(null);
   const dragSubtreeRef = useRef<Set<string> | null>(null);
@@ -173,6 +174,7 @@ function EditorInner({ mapId }: { mapId: string }) {
   const derived = useMemo(() => {
     const list = Object.values(nodes);
     if (!list.length) return { flowNodes: [] as MindFlowNode[], flowEdges: [] as Edge[] };
+    const byId = nodes;
     const childrenOf = buildChildrenIndex(list);
     const depths = computeDepths(childrenOf);
     const visible = computeVisibleIds(childrenOf);
@@ -219,6 +221,25 @@ function EditorInner({ mapId }: { mapId: string }) {
           source: n.parent_id,
           target: n.id,
           type: 'default',
+        });
+      }
+      // Extra "belongs to" links: dashed, so the same box can live in several
+      // places without being duplicated.
+      for (const linkedId of n.linked_parent_ids ?? []) {
+        if (!visible.has(linkedId) || !byId[linkedId]) continue;
+        const active = selectedId === n.id || selectedId === linkedId;
+        flowEdges.push({
+          id: `l-${linkedId}-${n.id}`,
+          source: linkedId,
+          target: n.id,
+          type: 'default',
+          style: {
+            stroke: 'var(--accent)',
+            strokeWidth: active ? 2.4 : 1.6,
+            strokeDasharray: '7 5',
+            opacity: active ? 1 : 0.55,
+          },
+          zIndex: active ? 10 : 0,
         });
       }
     }
@@ -714,6 +735,11 @@ function EditorInner({ mapId }: { mapId: string }) {
                 run: () => setPicker({ mode: 'move', id: selectedNode.id }),
               },
               {
+                label: '⇄ Vincular…',
+                disabled: selectedNode.id === rootId,
+                run: () => setPicker({ mode: 'link', id: selectedNode.id }),
+              },
+              {
                 label: 'Duplicar',
                 disabled: selectedNode.id === rootId,
                 run: () => useMapStore.getState().duplicateSubtree(selectedNode.id),
@@ -761,6 +787,7 @@ function EditorInner({ mapId }: { mapId: string }) {
             }}
             onDelete={confirmDelete}
             onPickAction={(mode, id) => setPicker({ mode, id })}
+            onNavigate={reveal}
           />
         </div>
       )}
@@ -781,6 +808,12 @@ function EditorInner({ mapId }: { mapId: string }) {
           const exclude = new Set<string>();
           if (picker.mode === 'children') {
             exclude.add(picker.id);
+          } else if (picker.mode === 'link') {
+            // Only itself, its current parent and existing links are invalid.
+            exclude.add(picker.id);
+            const node = s.nodes[picker.id];
+            if (node?.parent_id) exclude.add(node.parent_id);
+            (node?.linked_parent_ids ?? []).forEach((p) => exclude.add(p));
           } else {
             s.subtreeIds(picker.id).forEach((i) => exclude.add(i));
             if (picker.mode === 'sibling' && s.rootId) exclude.add(s.rootId);
@@ -789,6 +822,7 @@ function EditorInner({ mapId }: { mapId: string }) {
             move: 'Mover esta caixa para dentro de…',
             sibling: 'Tornar esta caixa irmã de…',
             children: 'Levar todos os filhos desta caixa para…',
+            link: 'Este assunto também pertence a…',
           };
           return (
             <NodePicker
@@ -797,7 +831,15 @@ function EditorInner({ mapId }: { mapId: string }) {
               onClose={() => setPicker(null)}
               onPick={(targetId) => {
                 setPicker(null);
-                if (picker.mode === 'move') {
+                if (picker.mode === 'link') {
+                  if (s.linkToParent(picker.id, targetId)) {
+                    // Make sure the new connection is actually visible.
+                    s.pathTo(targetId).forEach((n) => {
+                      if (n.collapsed) s.updateNode(n.id, { collapsed: false }, 'reveal');
+                    });
+                    reveal(picker.id);
+                  }
+                } else if (picker.mode === 'move') {
                   if (s.reparent(picker.id, targetId)) reveal(picker.id);
                 } else if (picker.mode === 'sibling') {
                   const parentId = s.nodes[targetId]?.parent_id;

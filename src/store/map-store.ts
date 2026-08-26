@@ -36,6 +36,8 @@ interface MapStore {
   createSibling: (id: string, title?: string) => string | null;
   reparent: (id: string, newParentId: string, opts?: { after?: string }) => boolean;
   moveChildren: (fromId: string, toId: string) => number;
+  linkToParent: (id: string, parentId: string) => boolean;
+  unlinkFromParent: (id: string, parentId: string) => void;
   updateNode: (id: string, patch: Partial<MapNode>, coalesceKey?: string) => void;
   deleteSubtree: (id: string) => void;
   duplicateSubtree: (id: string) => string | null;
@@ -290,6 +292,36 @@ export const useMapStore = create<MapStore>((set, get) => {
       return kids.length;
     },
 
+    linkToParent: (id, parentId) => {
+      const nodes = get().nodes;
+      const node = nodes[id];
+      if (!node || !nodes[parentId]) return false;
+      if (id === parentId || node.parent_id === parentId) return false;
+      if ((node.linked_parent_ids ?? []).includes(parentId)) return false;
+      mutate((current) => ({
+        ...current,
+        [id]: {
+          ...current[id],
+          linked_parent_ids: [...(current[id].linked_parent_ids ?? []), parentId],
+        },
+      }));
+      return true;
+    },
+
+    unlinkFromParent: (id, parentId) => {
+      mutate((current) => {
+        const node = current[id];
+        if (!node?.linked_parent_ids?.length) return current;
+        return {
+          ...current,
+          [id]: {
+            ...node,
+            linked_parent_ids: node.linked_parent_ids.filter((p) => p !== parentId),
+          },
+        };
+      });
+    },
+
     updateNode: (id, patch, coalesceKey) => {
       mutate(
         (nodes) => {
@@ -306,7 +338,11 @@ export const useMapStore = create<MapStore>((set, get) => {
       mutate((nodes) => {
         const next: NodesRecord = {};
         for (const [nid, n] of Object.entries(nodes)) {
-          if (!ids.has(nid)) next[nid] = n;
+          if (ids.has(nid)) continue;
+          // Drop links that pointed at the deleted branch.
+          const links = n.linked_parent_ids ?? [];
+          const kept = links.filter((p) => !ids.has(p));
+          next[nid] = kept.length === links.length ? n : { ...n, linked_parent_ids: kept };
         }
         return next;
       });
@@ -332,6 +368,9 @@ export const useMapStore = create<MapStore>((set, get) => {
             id: idMap.get(oldId)!,
             parent_id:
               oldId === id ? n.parent_id : idMap.get(n.parent_id ?? '') ?? n.parent_id,
+            // Links inside the duplicated branch follow the copies; links to
+            // the outside keep pointing at the original boxes.
+            linked_parent_ids: (n.linked_parent_ids ?? []).map((p) => idMap.get(p) ?? p),
             position_x: oldId === id && n.position_x != null ? n.position_x + 40 : n.position_x,
             position_y: oldId === id && n.position_y != null ? n.position_y + 40 : n.position_y,
             created_at: undefined,

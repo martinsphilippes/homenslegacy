@@ -157,6 +157,39 @@ await page.waitForTimeout(900);
 ok('mover caixa para outro pai', (await page.locator('nav >> text=MULHER').count()) > 0);
 await page.keyboard.press('Escape');
 
+// 15c. Link a box to a second parent (belongs to two places, no duplication)
+await page.keyboard.press('/');
+await page.fill('input[placeholder*="Buscar em títulos"]', 'Disciplina');
+await page.locator('button', { hasText: /^Disciplina/ }).first().click();
+await page.waitForSelector('text=Detalhes do assunto', { timeout: 8000 });
+const nodesBeforeLink = await page.locator('.react-flow__node').count();
+await page.click('text=⇄ Vincular também a outra caixa…');
+await page.waitForSelector('input[placeholder="Buscar a caixa de destino…"]', { timeout: 5000 });
+await page.fill('input[placeholder="Buscar a caixa de destino…"]', 'CASAMENTO');
+await page.locator('.fixed button', { hasText: 'CASAMENTO' }).first().click();
+await page.waitForTimeout(900);
+ok(
+  'vincular caixa a um segundo pai',
+  (await page.locator('.react-flow__node >> text="⇄ 1"').count()) > 0
+);
+ok(
+  'vínculo não duplica a caixa',
+  (await page.locator('.react-flow__node').filter({ has: page.getByText('Disciplina', { exact: true }) }).count()) === 1
+);
+await page.waitForSelector('text=Salvo', { timeout: 10000 });
+// The link survives a reload and is listed in the panel
+await page.reload();
+await page.waitForSelector('text=HOMEM, FAMÍLIA E LEGADO', { timeout: 20000 });
+await page.keyboard.press('/');
+await page.fill('input[placeholder*="Buscar em títulos"]', 'Disciplina');
+await page.locator('button', { hasText: /^Disciplina/ }).first().click();
+await page.waitForSelector('text=Pertence a', { timeout: 8000 });
+ok(
+  'vínculo persiste e aparece no painel',
+  (await page.locator('aside >> text=CASAMENTO').count()) > 0
+);
+await page.keyboard.press('Escape');
+
 // 16. Presentation mode
 await page.click('button[title="Modo apresentação"]');
 await page.waitForTimeout(900);

@@ -43,6 +43,7 @@ export function nodeDocData(n: MapNode): Record<string, unknown> {
       comment: r.comment ?? '',
     })),
     order_index: n.order_index ?? 0,
+    linked_parent_ids: n.linked_parent_ids ?? [],
     position_x: n.position_x ?? null,
     position_y: n.position_y ?? null,
     collapsed: n.collapsed ?? false,
@@ -210,6 +211,10 @@ export async function copyMapWithNodes(
     id: idMap.get(n.id)!,
     map_id: newMap.id,
     parent_id: n.parent_id ? (idMap.get(n.parent_id) ?? null) : null,
+    // Keep cross-links pointing at the copied nodes.
+    linked_parent_ids: (n.linked_parent_ids ?? [])
+      .map((p) => idMap.get(p))
+      .filter((p): p is string => !!p),
     created_by: uid,
     created_at: undefined,
     updated_at: undefined,

@@ -12,7 +12,7 @@ interface Props {
   menu: MenuState;
   onClose: () => void;
   onDelete: (id: string) => void;
-  onPickAction: (mode: 'move' | 'sibling' | 'children', id: string) => void;
+  onPickAction: (mode: 'move' | 'sibling' | 'children' | 'link', id: string) => void;
 }
 
 export function NodeContextMenu({ menu, onClose, onDelete, onPickAction }: Props) {
@@ -32,6 +32,11 @@ export function NodeContextMenu({ menu, onClose, onDelete, onPickAction }: Props
     { label: 'Editar título', run: () => store.setEditing(menu.id) },
     { label: 'Duplicar ramo', disabled: isRoot, run: () => store.duplicateSubtree(menu.id) },
     { label: 'Mover para outra caixa…', disabled: isRoot, run: () => onPickAction('move', menu.id) },
+    {
+      label: '⇄ Vincular também a…',
+      disabled: isRoot,
+      run: () => onPickAction('link', menu.id),
+    },
     { label: 'Tornar irmão de…', disabled: isRoot, run: () => onPickAction('sibling', menu.id) },
     {
       label: 'Levar todos os filhos para…',

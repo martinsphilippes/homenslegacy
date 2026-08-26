@@ -47,7 +47,9 @@ export function nodeDocData(n: MapNode): Record<string, unknown> {
     position_y: n.position_y ?? null,
     collapsed: n.collapsed ?? false,
     created_at: n.created_at ?? now(),
-    updated_at: now(),
+    // Preserve the local edit timestamp so the server copy matches the store
+    // (echo comparison) and last-write-wins stays consistent across devices.
+    updated_at: n.updated_at ?? now(),
     created_by: n.created_by ?? null,
   };
 }
@@ -74,10 +76,13 @@ function mergeMaps(...lists: MindMap[][]): MindMap[] {
 const toMaps = (snap: { docs: { id: string; data: () => unknown }[] }) =>
   snap.docs.map((d) => ({ ...(d.data() as MindMap), id: d.id }));
 
-/** Own maps + maps shared with this e-mail. */
+/** Own maps + maps shared with this e-mail + maps shared with everyone. */
 export async function listMaps(uid: string, email?: string | null): Promise<MindMap[]> {
   const db = getDb();
-  const queries = [getDocs(query(collection(db, 'maps'), where('owner_id', '==', uid)))];
+  const queries = [
+    getDocs(query(collection(db, 'maps'), where('owner_id', '==', uid))),
+    getDocs(query(collection(db, 'maps'), where('shared_with_all', '==', true))),
+  ];
   if (email) {
     queries.push(
       getDocs(
@@ -99,6 +104,9 @@ export async function listMapsFromCache(
     const own = await getDocsFromCache(
       query(collection(db, 'maps'), where('owner_id', '==', uid))
     ).catch(() => null);
+    const community = await getDocsFromCache(
+      query(collection(db, 'maps'), where('shared_with_all', '==', true))
+    ).catch(() => null);
     const shared = email
       ? await getDocsFromCache(
           query(
@@ -107,7 +115,7 @@ export async function listMapsFromCache(
           )
         ).catch(() => null)
       : null;
-    const lists = [own, shared].filter(Boolean).map((s) => toMaps(s!));
+    const lists = [own, community, shared].filter(Boolean).map((s) => toMaps(s!));
     const maps = mergeMaps(...lists);
     return maps.length ? maps : null;
   } catch {
@@ -120,6 +128,11 @@ export async function setMapMembers(mapId: string, emails: string[]) {
   const clean = [...new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean))];
   await updateDoc(doc(getDb(), 'maps', mapId), { member_emails: clean, updated_at: now() });
   return clean;
+}
+
+/** Opens (or closes) the map to every signed-in account, current and future. */
+export async function setMapSharedWithAll(mapId: string, shared: boolean) {
+  await updateDoc(doc(getDb(), 'maps', mapId), { shared_with_all: shared, updated_at: now() });
 }
 
 export async function createMap(uid: string, title: string, concept: string): Promise<MindMap> {

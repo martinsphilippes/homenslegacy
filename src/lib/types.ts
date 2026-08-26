@@ -29,6 +29,8 @@ export interface MindMap {
   concept: string;
   /** E-mails (minúsculos) de quem pode ver e editar este mapa além do dono. */
   member_emails?: string[];
+  /** true = qualquer conta do aplicativo (atual ou futura) vê e edita este mapa. */
+  shared_with_all?: boolean;
   created_at: string;
   updated_at: string;
 }

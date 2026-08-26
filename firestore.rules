@@ -1,9 +1,11 @@
 rules_version = '2';
 
 // Homens | Família & Legado — security rules.
-// The owner has full control; people listed in `member_emails` can read and
-// edit the map and its nodes (shared family/group maps). Only the owner can
-// delete the map or change its ownership.
+// Access levels per map:
+//   - owner: full control (delete, manage sharing)
+//   - member_emails: listed e-mails can read and edit
+//   - shared_with_all: any signed-in account can read and edit
+// Ownership and the sharing settings themselves can only be changed by the owner.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -21,17 +23,32 @@ service cloud.firestore {
         && request.auth.token.email.lower() in data.get('member_emails', []);
     }
 
+    function isCommunity(data) {
+      return signedIn() && data.get('shared_with_all', false) == true;
+    }
+
+    function canRead(data) {
+      return isOwner(data) || isMember(data) || isCommunity(data);
+    }
+
+    function sharingUnchanged() {
+      return request.resource.data.get('member_emails', []) == resource.data.get('member_emails', [])
+        && request.resource.data.get('shared_with_all', false) == resource.data.get('shared_with_all', false);
+    }
+
     function canAccessMap(mapId) {
       let data = get(/databases/$(database)/documents/maps/$(mapId)).data;
-      return isOwner(data) || isMember(data);
+      return isOwner(data) || isMember(data) || isCommunity(data);
     }
 
     match /maps/{mapId} {
-      allow read: if isOwner(resource.data) || isMember(resource.data);
+      allow read: if canRead(resource.data);
       allow create: if signedIn() && request.resource.data.owner_id == request.auth.uid;
-      // Members may edit map metadata, but ownership can never change hands.
-      allow update: if (isOwner(resource.data) || isMember(resource.data))
-        && request.resource.data.owner_id == resource.data.owner_id;
+      // Members/community may edit map metadata, but never the ownership nor
+      // the sharing settings — those belong to the owner.
+      allow update: if request.resource.data.owner_id == resource.data.owner_id
+        && (isOwner(resource.data)
+            || ((isMember(resource.data) || isCommunity(resource.data)) && sharingUnchanged()));
       allow delete: if isOwner(resource.data);
 
       match /nodes/{nodeId} {

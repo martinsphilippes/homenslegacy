@@ -59,6 +59,17 @@ let queueRef: SaveQueue | null = null;
 let lastHistoryKey = '';
 let lastHistoryAt = 0;
 
+/** Re-stamps the nodes that differ from `current` (used by undo/redo so the
+ *  restored state propagates to other devices as the newest version). */
+function restampDiff(current: NodesRecord, target: NodesRecord): NodesRecord {
+  const stampISO = new Date().toISOString();
+  const result: NodesRecord = { ...target };
+  for (const [id, node] of Object.entries(target)) {
+    if (current[id] !== node) result[id] = { ...node, updated_at: stampISO };
+  }
+  return result;
+}
+
 function diffAndQueue(prev: NodesRecord, next: NodesRecord) {
   if (!queueRef) return;
   for (const id of Object.keys(prev)) {
@@ -89,9 +100,24 @@ export const useMapStore = create<MapStore>((set, get) => {
     lastHistoryKey = opts.coalesceKey ?? '';
     lastHistoryAt = now;
 
+    // Every local change gets a fresh timestamp; remote echoes/edits are only
+    // accepted when strictly newer, so a late server echo can never overwrite
+    // what was just typed here.
+    const stampISO = new Date().toISOString();
+    let stampedNext = next;
+    const stamped: NodesRecord = {};
+    let anyStamp = false;
+    for (const [id, node] of Object.entries(next)) {
+      if (prev[id] !== node) {
+        stamped[id] = { ...node, updated_at: stampISO };
+        anyStamp = true;
+      }
+    }
+    if (anyStamp) stampedNext = { ...next, ...stamped };
+
     const past = coalesce ? state.past : [...state.past, prev].slice(-HISTORY_LIMIT);
-    diffAndQueue(prev, next);
-    set({ nodes: next, past, future: [] });
+    diffAndQueue(prev, stampedNext);
+    set({ nodes: stampedNext, past, future: [] });
   }
 
   function childrenOf(nodes: NodesRecord, parentId: string | null): MapNode[] {
@@ -417,19 +443,19 @@ export const useMapStore = create<MapStore>((set, get) => {
     undo: () => {
       const { past, future, nodes } = get();
       if (!past.length) return;
-      const prev = past[past.length - 1];
-      diffAndQueue(nodes, prev);
+      const target = restampDiff(nodes, past[past.length - 1]);
+      diffAndQueue(nodes, target);
       lastHistoryKey = '';
-      set({ nodes: prev, past: past.slice(0, -1), future: [...future, nodes] });
+      set({ nodes: target, past: past.slice(0, -1), future: [...future, nodes] });
     },
 
     redo: () => {
       const { past, future, nodes } = get();
       if (!future.length) return;
-      const next = future[future.length - 1];
-      diffAndQueue(nodes, next);
+      const target = restampDiff(nodes, future[future.length - 1]);
+      diffAndQueue(nodes, target);
       lastHistoryKey = '';
-      set({ nodes: next, past: [...past, nodes], future: future.slice(0, -1) });
+      set({ nodes: target, past: [...past, nodes], future: future.slice(0, -1) });
     },
 
     subtreeIds: (id) => {
@@ -452,7 +478,8 @@ export const useMapStore = create<MapStore>((set, get) => {
       let changed = false;
       for (const n of upserts) {
         const cur = next[n.id];
-        if (!cur || (n.updated_at ?? '') !== (cur.updated_at ?? '')) {
+        // Accept only strictly newer remote versions — never a stale echo.
+        if (!cur || (n.updated_at ?? '') > (cur.updated_at ?? '')) {
           next[n.id] = n;
           changed = true;
         }

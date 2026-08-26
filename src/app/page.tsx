@@ -20,6 +20,7 @@ import {
   listMapsFromCache,
   renameMap,
   setMapMembers,
+  setMapSharedWithAll,
 } from '@/lib/maps-repo';
 import { emptyNode } from '@/lib/types';
 import { ConfirmDialog } from '@/components/confirm-dialog';
@@ -209,7 +210,11 @@ function MapsScreen() {
                     {map.concept && (
                       <span className="mt-0.5 block text-sm text-[var(--muted)]">{map.concept}</span>
                     )}
-                    {map.owner_id !== uid() ? (
+                    {map.shared_with_all ? (
+                      <span className="mt-1.5 inline-block rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--accent)]">
+                        Compartilhado com todos
+                      </span>
+                    ) : map.owner_id !== uid() ? (
                       <span className="mt-1.5 inline-block rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--accent)]">
                         Compartilhado comigo
                       </span>
@@ -317,9 +322,41 @@ function MapsScreen() {
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-base font-semibold">Compartilhar “{shareTarget.title}”</h2>
-            <p className="mt-1.5 text-xs text-[var(--muted)]">
-              Quem você adicionar verá e editará este mesmo mapa — as mudanças aparecem para todos
-              em tempo real. A pessoa precisa criar uma conta no aplicativo com o e-mail informado.
+
+            <label className="mt-3 flex cursor-pointer items-start gap-2.5 rounded-xl border border-[var(--line)] p-3">
+              <input
+                type="checkbox"
+                checked={!!shareTarget.shared_with_all}
+                disabled={shareBusy}
+                onChange={async (e) => {
+                  const checked = e.target.checked;
+                  setShareBusy(true);
+                  try {
+                    await setMapSharedWithAll(shareTarget.id, checked);
+                    setShareTarget({ ...shareTarget, shared_with_all: checked });
+                    await load();
+                  } catch (err) {
+                    setError(
+                      'Falha ao alterar compartilhamento: ' +
+                        (err instanceof Error ? err.message : '')
+                    );
+                  }
+                  setShareBusy(false);
+                }}
+                className="mt-0.5 h-4 w-4 accent-[var(--accent)]"
+              />
+              <span className="text-sm">
+                <span className="font-medium">Compartilhar com todos os usuários</span>
+                <span className="mt-0.5 block text-xs text-[var(--muted)]">
+                  Qualquer pessoa com conta no aplicativo — inclusive contas criadas no futuro —
+                  verá e editará este mapa.
+                </span>
+              </span>
+            </label>
+
+            <p className="mt-3 text-xs text-[var(--muted)]">
+              Ou compartilhe apenas com pessoas específicas pelo e-mail que usam no aplicativo — as
+              mudanças aparecem para todos em tempo real:
             </p>
 
             {(shareTarget.member_emails?.length ?? 0) > 0 && (

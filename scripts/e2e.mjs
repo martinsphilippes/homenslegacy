@@ -187,8 +187,16 @@ await page.fill('input[placeholder*="Buscar em títulos"]', 'Disciplina');
 await page.locator('button', { hasText: /^Disciplina/ }).first().click();
 await page.waitForSelector('text=Detalhes do assunto', { timeout: 8000 });
 await page.keyboard.press('Escape'); // close panel; node stays selected? select via node click
-await page.waitForTimeout(400);
-await nodeByTitle(page, 'Disciplina').click();
+await page.waitForTimeout(800);
+// realtime acks may re-render nodes mid-click; retry a few times
+for (let attempt = 0; attempt < 4; attempt++) {
+  try {
+    await nodeByTitle(page, 'Disciplina').click({ timeout: 5000 });
+    break;
+  } catch {
+    await page.waitForTimeout(500);
+  }
+}
 await page.keyboard.press('Tab');
 await page.waitForSelector('input[placeholder="Novo assunto…"]');
 await page.fill('input[placeholder="Novo assunto…"]', 'Temporário');
@@ -307,6 +315,33 @@ await page.waitForSelector('text=Salvo', { timeout: 10000 });
 await guest.waitForSelector('.react-flow__node >> text="Tempo Real"', { timeout: 15000 });
 ok('sincronização em tempo real entre usuários', true);
 await guest.close();
+
+// 25. Community sharing: open the map to ALL accounts (current and future)
+await page.goto(BASE + '/');
+await page.waitForSelector('text=Abrir mapa', { timeout: 20000 });
+await page.click('text=Compartilhar');
+await page.waitForSelector('input[type=checkbox]', { timeout: 8000 });
+await page.locator('input[type=checkbox]').click();
+await page.waitForSelector('text=Compartilhado com todos', { timeout: 10000 });
+ok('ativar compartilhamento com todos os usuários', true);
+await page.click('text=Fechar');
+
+// 26. A brand-new account (never invited) sees and opens the community map
+const newcomer = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+await newcomer.goto(BASE + '/login');
+await newcomer.click('text=Criar conta');
+await newcomer.fill('input[type=email]', 'teste3@exemplo.com');
+await newcomer.fill('input[type=password]', 'senha-teste-123');
+await newcomer.click('button[type=submit]');
+await newcomer.waitForSelector('text=Compartilhado com todos', { timeout: 20000 });
+ok(
+  'conta nova vê o mapa da comunidade sem convite (e sem cópia própria)',
+  (await newcomer.locator('text=Homem, Família e Legado').count()) === 1
+);
+await newcomer.click('text=Abrir mapa');
+await newcomer.waitForSelector('text=HOMEM, FAMÍLIA E LEGADO', { timeout: 20000 });
+ok('conta nova abre e edita o mapa da comunidade', true);
+await newcomer.close();
 
 await browser.close();
 console.log(failures === 0 ? '\nTODOS OS TESTES PASSARAM' : `\n${failures} FALHA(S)`);
